@@ -1,0 +1,258 @@
+:root {
+  --blue: #00338d;
+  --cyan: #00a3e0;
+  --ink: #172033;
+  --muted: #64748b;
+  --line: #d9e2ef;
+  --bg: #f5f7fb;
+  --card: #ffffff;
+  --ok: #12805c;
+  --warn: #b45309;
+  --bad: #c0262d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: center;
+  padding: 26px 48px;
+  background: linear-gradient(120deg, var(--blue), #005eb8 65%, var(--cyan));
+  color: #fff;
+}
+
+header h1 {
+  margin: 0 0 6px;
+  font-size: 26px;
+}
+
+header p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+header span {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+main {
+  width: min(1200px, calc(100% - 40px));
+  margin: 24px auto 48px;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 8px 22px rgba(20, 32, 51, 0.06);
+}
+
+.panel h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+
+.hint,
+#status {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #334155;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px 11px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+
+.upload-box {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px dashed #9db7d7;
+  background: #f8fbff;
+  border-radius: 8px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+button {
+  border: 0;
+  border-radius: 7px;
+  padding: 10px 15px;
+  color: #fff;
+  background: var(--blue);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+button.secondary {
+  color: #24364f;
+  background: #e9eef6;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.file-preview {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.file-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #e4eaf3;
+  border-radius: 7px;
+  padding: 9px 10px;
+  font-size: 13px;
+  background: #fff;
+}
+
+.file-row span:first-child {
+  overflow-wrap: anywhere;
+}
+
+.file-row span:last-child {
+  color: var(--blue);
+  white-space: nowrap;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.metrics div {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.metrics span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.metrics strong {
+  font-size: 30px;
+  color: var(--blue);
+}
+
+.table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th,
+td {
+  border-bottom: 1px solid #edf1f7;
+  padding: 10px 12px;
+  vertical-align: top;
+  text-align: left;
+  line-height: 1.45;
+}
+
+th {
+  background: #f3f6fa;
+  color: #334155;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.status {
+  display: inline-block;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.status.ok {
+  color: var(--ok);
+  background: #e8f7f1;
+}
+
+.status.warn {
+  color: var(--warn);
+  background: #fff7e6;
+}
+
+.status.missing {
+  color: var(--bad);
+  background: #fff0f0;
+}
+
+@media (max-width: 900px) {
+  header {
+    padding: 22px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .grid,
+  .metrics {
+    grid-template-columns: 1fr;
+  }
+}

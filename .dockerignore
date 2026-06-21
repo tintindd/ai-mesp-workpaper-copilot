@@ -1,0 +1,13 @@
+.git
+.tools
+training_files
+mesp_automation_result.json
+mesp_training_profile.json
+training_files_inventory.json
+__pycache__
+*.pyc
+.pytest_cache
+.env
+.env.*
+*.log
+*.tmp

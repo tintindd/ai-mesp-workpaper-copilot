@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: ai-mesp-workpaper-copilot
+    env: docker
+    plan: starter
+    autoDeploy: false
+    healthCheckPath: /api/health

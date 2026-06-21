@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI-MESP Workpaper Copilot</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div>
+      <h1>AI-MESP Workpaper Copilot</h1>
+      <p>上传 MESP 支持文件，自动完成证据识别、字段映射、异常复核与追溯链生成。</p>
+    </div>
+    <span>Upload Web App</span>
+  </header>
+
+  <main>
+    <section class="panel setup">
+      <div>
+        <h2>分析设置</h2>
+        <p class="hint">适用于不同项目和同事电脑，不依赖本地 training_files 文件夹。</p>
+      </div>
+
+      <div class="grid">
+        <label>
+          成本方法
+          <select id="costMethod">
+            <option value="standard">标准成本法</option>
+            <option value="actual">实际成本法</option>
+          </select>
+        </label>
+        <label>
+          测试程序
+          <select id="program">
+            <option value="SPD03012">SPD03012 - 标准成本法固定加工成本</option>
+            <option value="SPD03014">SPD03014 - 标准成本法可变加工成本</option>
+            <option value="SPD03015" selected>SPD03015 - 存货成本差异分摊</option>
+            <option value="SPD03011">SPD03011 - 实际成本法固定加工成本</option>
+            <option value="SPD03013">SPD03013 - 实际成本法可变加工成本</option>
+          </select>
+        </label>
+        <label>
+          审计期间
+          <input id="period" value="2025.01.01-2025.12.31" />
+        </label>
+        <label>
+          样本量
+          <input id="sampleCount" type="number" value="5" min="1" />
+        </label>
+      </div>
+    </section>
+
+    <section class="panel upload">
+      <div>
+        <h2>上传支持文件</h2>
+        <p class="hint">可以选择整个样本文件夹，也可以一次性选择多份 CO03、KSBT、3611、CKM3 截图和表格。</p>
+      </div>
+
+      <div class="upload-box">
+        <input id="files" type="file" multiple webkitdirectory directory />
+        <p class="hint">建议文件名或文件夹名包含样本号、订单号、报表类型和截图/表格标识。</p>
+      </div>
+
+      <div class="actions">
+        <button id="analyzeBtn">Analyze</button>
+        <button class="secondary" id="clearBtn">Clear</button>
+        <span id="status">尚未分析。</span>
+      </div>
+
+      <div id="filePreview" class="file-preview"></div>
+    </section>
+
+    <section class="metrics">
+      <div><span>样本数</span><strong id="sampleMetric">0</strong></div>
+      <div><span>识别文件</span><strong id="fileMetric">0</strong></div>
+      <div><span>缺失项</span><strong id="missingMetric">0</strong></div>
+      <div><span>追溯项</span><strong id="traceMetric">0</strong></div>
+    </section>
+
+    <section class="panel">
+      <h2>异常与追问</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>类型</th>
+              <th>样本</th>
+              <th>问题</th>
+              <th>建议</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody id="issueBody">
+            <tr><td colspan="5">暂无结果。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>SAP 表格映射</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>样本</th>
+              <th>报表</th>
+              <th>订单号</th>
+              <th>文件</th>
+              <th>行数</th>
+              <th>映射字段</th>
+              <th>汇总</th>
+            </tr>
+          </thead>
+          <tbody id="workbookBody">
+            <tr><td colspan="7">暂无结果。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Evidence Traceability</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>样本</th>
+              <th>报表</th>
+              <th>底稿字段</th>
+              <th>来源文件</th>
+              <th>来源 Sheet</th>
+              <th>来源字段</th>
+            </tr>
+          </thead>
+          <tbody id="traceBody">
+            <tr><td colspan="6">暂无结果。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
