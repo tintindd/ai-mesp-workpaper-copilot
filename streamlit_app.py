@@ -16,6 +16,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
 from mesp_automation_engine import analyze_folder  # noqa: E402
+from workpaper_exporter import build_workpaper_bytes  # noqa: E402
 
 
 st.set_page_config(
@@ -175,6 +176,14 @@ if analyze_clicked:
         render_trace(result.get("evidence_trace") or [])
 
     with tab_json:
+        workbook_bytes = build_workpaper_bytes(result)
+        st.download_button(
+            "下载 Excel 底稿",
+            data=workbook_bytes,
+            file_name="AI-MESP_Workpaper_Output.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+        )
         st.download_button(
             "下载 mesp_automation_result.json",
             data=json.dumps(result, ensure_ascii=False, indent=2, default=str).encode("utf-8"),

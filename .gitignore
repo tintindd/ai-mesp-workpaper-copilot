@@ -24,6 +24,7 @@ __pycache__/
 *.tmp
 *.temp
 ~$*
+outputs/
 
 # Local environment files
 .env
