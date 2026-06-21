@@ -3,454 +3,459 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI-MESP Workpaper Copilot | 模块化追问前端</title>
+  <title>AI-MESP Workpaper Copilot</title>
   <style>
     :root {
-      --kpmg-blue: #00338d;
-      --kpmg-cyan: #00a3e0;
-      --deep: #071a3a;
+      --blue: #00338d;
+      --blue-2: #005eb8;
+      --cyan: #00a3e0;
+      --ink: #142033;
       --muted: #64748b;
-      --bg: #f4f7fb;
+      --line: #d8e1ee;
+      --bg: #f5f7fb;
       --card: #ffffff;
-      --danger: #dc2626;
-      --warning: #d97706;
-      --success: #16a34a;
-      --border: #dbe3ef;
+      --ok: #12805c;
+      --warn: #b45309;
+      --bad: #c0262d;
+      --soft-ok: #e8f7f1;
+      --soft-warn: #fff7e6;
+      --soft-bad: #fff0f0;
     }
 
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
-      font-family: "Microsoft YaHei", Arial, sans-serif;
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
     }
 
     body {
       min-height: 100vh;
-      background: linear-gradient(135deg, #eef5ff 0%, #f8fafc 45%, #ffffff 100%);
-      color: #0f172a;
+      background: var(--bg);
+      color: var(--ink);
     }
 
     header {
-      background: linear-gradient(120deg, var(--kpmg-blue), #005eb8, var(--kpmg-cyan));
-      color: white;
-      padding: 28px 56px;
+      background: linear-gradient(120deg, var(--blue), var(--blue-2) 60%, var(--cyan));
+      color: #fff;
+      padding: 24px 48px;
       display: flex;
       justify-content: space-between;
+      gap: 24px;
       align-items: center;
-      box-shadow: 0 14px 34px rgba(0, 51, 141, 0.25);
+      box-shadow: 0 14px 30px rgba(0, 51, 141, 0.22);
     }
 
-    header .title h1 {
-      font-size: 26px;
-      letter-spacing: 0.3px;
-      margin-bottom: 8px;
+    h1 {
+      font-size: 25px;
+      line-height: 1.25;
+      letter-spacing: 0;
+      margin-bottom: 6px;
     }
 
-    header .title p {
-      opacity: 0.9;
+    header p {
+      color: rgba(255, 255, 255, 0.88);
       font-size: 14px;
     }
 
-    .badge {
-      padding: 8px 14px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.16);
-      border: 1px solid rgba(255, 255, 255, 0.28);
+    .top-badge {
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      background: rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      padding: 9px 12px;
       font-size: 13px;
+      white-space: nowrap;
     }
 
     main {
-      max-width: 1180px;
-      margin: 28px auto;
-      padding: 0 22px 40px;
+      max-width: 1200px;
+      margin: 24px auto 42px;
+      padding: 0 22px;
     }
 
     .layout {
       display: grid;
-      grid-template-columns: 260px 1fr;
-      gap: 24px;
+      grid-template-columns: 250px 1fr;
+      gap: 20px;
       align-items: start;
     }
 
     .sidebar,
     .panel,
-    .result-card {
+    .section-block {
       background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.07);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(22, 34, 51, 0.06);
     }
 
     .sidebar {
+      padding: 16px;
       position: sticky;
-      top: 20px;
-      padding: 18px;
+      top: 18px;
     }
 
-    .step-item {
-      display: flex;
+    .step {
+      display: grid;
+      grid-template-columns: 28px 1fr;
       gap: 10px;
-      padding: 13px 12px;
-      border-radius: 12px;
+      padding: 12px 8px;
+      border-radius: 7px;
       color: var(--muted);
-      align-items: center;
-      cursor: pointer;
-      margin-bottom: 8px;
-      transition: 0.2s;
+      align-items: start;
     }
 
-    .step-item.active {
-      background: #e8f2ff;
-      color: var(--kpmg-blue);
-      font-weight: 700;
+    .step.active {
+      color: var(--blue);
+      background: #eef5ff;
     }
 
-    .step-item.done {
-      color: var(--success);
+    .step.done {
+      color: var(--ok);
     }
 
     .step-index {
-      width: 25px;
-      height: 25px;
+      width: 24px;
+      height: 24px;
       border-radius: 50%;
+      border: 1px solid currentColor;
       display: grid;
       place-items: center;
-      background: #edf2f7;
       font-size: 12px;
-      flex: 0 0 auto;
+      font-weight: 700;
     }
 
-    .step-item.active .step-index {
-      background: var(--kpmg-blue);
-      color: white;
+    .step strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 3px;
+    }
+
+    .step span {
+      font-size: 12px;
+      line-height: 1.35;
     }
 
     .panel {
-      padding: 28px;
-      margin-bottom: 22px;
+      padding: 24px;
+      min-height: 620px;
     }
 
-    .panel h2 {
+    .panel-title {
+      margin-bottom: 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: flex-start;
+    }
+
+    .panel-title h2 {
       font-size: 22px;
-      color: var(--deep);
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
 
-    .hint {
+    .hint,
+    .small {
       color: var(--muted);
-      line-height: 1.7;
-      font-size: 14px;
-      margin-bottom: 22px;
+      line-height: 1.55;
+      font-size: 13px;
     }
 
     .form-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 18px;
-    }
-
-    .field {
-      margin-bottom: 16px;
+      gap: 16px;
+      margin: 18px 0;
     }
 
     label {
       display: block;
-      margin-bottom: 8px;
+      color: #334155;
+      font-size: 13px;
       font-weight: 700;
-      font-size: 14px;
-      color: #1e293b;
+      margin-bottom: 8px;
     }
 
     input,
     select,
     textarea {
       width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px 13px;
-      outline: none;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 11px 12px;
       font-size: 14px;
-      transition: 0.2s;
-      background: white;
+      outline: none;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    textarea {
+      min-height: 76px;
+      resize: vertical;
     }
 
     input:focus,
     select:focus,
     textarea:focus {
-      border-color: var(--kpmg-cyan);
-      box-shadow: 0 0 0 4px rgba(0, 163, 224, 0.12);
+      border-color: var(--blue-2);
+      box-shadow: 0 0 0 3px rgba(0, 94, 184, 0.12);
     }
 
-    textarea {
-      min-height: 96px;
-      resize: vertical;
-    }
-
-    .program-list {
+    .program-grid {
       display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
-      margin-top: 14px;
+      margin-top: 12px;
     }
 
     .program {
-      border: 1px solid var(--border);
-      border-radius: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
       padding: 14px;
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      gap: 12px;
-      align-items: center;
       cursor: pointer;
-      transition: 0.2s;
+      min-height: 138px;
+      background: #fff;
     }
 
-    .program:hover {
-      border-color: var(--kpmg-cyan);
-      transform: translateY(-1px);
-    }
-
+    .program:hover,
     .program.selected {
-      border-color: var(--kpmg-blue);
-      background: #f0f7ff;
-    }
-
-    .program-code {
-      color: var(--kpmg-blue);
-      font-weight: 800;
-      font-size: 13px;
+      border-color: var(--blue-2);
+      background: #f4f9ff;
     }
 
     .program-name {
-      font-weight: 700;
+      font-weight: 800;
+      font-size: 14px;
+      margin-bottom: 6px;
+      line-height: 1.35;
+    }
+
+    .program-code {
+      font-size: 12px;
+      color: var(--blue);
+      font-weight: 800;
+      margin-bottom: 10px;
     }
 
     .pill {
-      display: inline-block;
-      padding: 5px 9px;
-      border-radius: 999px;
-      background: #eef2ff;
-      color: var(--kpmg-blue);
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      border-radius: 6px;
+      padding: 0 8px;
+      margin: 3px 4px 0 0;
       font-size: 12px;
-      margin-right: 6px;
-      margin-top: 8px;
+      background: #eef2f7;
+      color: #334155;
+      border: 1px solid #d7dee8;
     }
 
     .upload-box {
-      border: 1.5px dashed #98b6d9;
-      background: #f7fbff;
-      border-radius: 16px;
-      padding: 24px;
-      text-align: center;
-      margin-bottom: 18px;
-    }
-
-    .upload-box input {
-      margin-top: 14px;
-      background: white;
-    }
-
-    .file-list {
-      display: grid;
-      gap: 10px;
-      max-height: 230px;
-      overflow: auto;
-      padding-right: 4px;
-    }
-
-    .file-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 11px 12px;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      font-size: 13px;
-      background: #ffffff;
-    }
-
-    .file-name {
-      word-break: break-all;
-    }
-
-    .file-tag {
-      color: var(--muted);
-      flex: 0 0 auto;
+      border: 1px dashed #9bb5d5;
+      border-radius: 8px;
+      background: #f8fbff;
+      padding: 18px;
+      margin: 16px 0;
     }
 
     .actions {
       display: flex;
-      gap: 12px;
+      justify-content: flex-end;
+      gap: 10px;
       margin-top: 22px;
       flex-wrap: wrap;
     }
 
     button {
-      border: none;
-      border-radius: 12px;
-      padding: 12px 18px;
+      border: 0;
+      border-radius: 7px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 800;
       cursor: pointer;
-      font-weight: 700;
-      transition: 0.2s;
     }
 
     .btn-primary {
-      background: var(--kpmg-blue);
-      color: white;
-    }
-
-    .btn-primary:hover {
-      background: #00296f;
-      transform: translateY(-1px);
+      background: var(--blue);
+      color: #fff;
     }
 
     .btn-secondary {
-      background: #e2e8f0;
-      color: #0f172a;
+      background: #e8edf5;
+      color: #24364f;
     }
 
     .btn-outline {
-      background: white;
-      color: var(--kpmg-blue);
-      border: 1px solid var(--kpmg-blue);
+      background: #fff;
+      color: var(--blue);
+      border: 1px solid var(--blue-2);
     }
 
     .hidden {
       display: none !important;
     }
 
-    .result-grid {
+    .file-list {
+      margin-top: 14px;
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 16px;
-      margin-bottom: 20px;
+      gap: 8px;
+      max-height: 280px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .file-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid #e3e9f2;
+      background: #fff;
+      border-radius: 7px;
+      padding: 9px 10px;
+      font-size: 13px;
+    }
+
+    .file-name {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .file-tag {
+      color: var(--blue);
+      background: #eef5ff;
+      border: 1px solid #d8e8fb;
+      padding: 4px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 16px 0 20px;
     }
 
     .metric {
-      padding: 18px;
-      border-radius: 16px;
-      background: #f8fafc;
-      border: 1px solid var(--border);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+    }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 6px;
     }
 
     .metric .num {
       font-size: 28px;
+      line-height: 1;
       font-weight: 900;
-      margin-top: 6px;
+      color: var(--blue);
     }
 
-    .metric.danger .num {
-      color: var(--danger);
+    .metric.ok .num {
+      color: var(--ok);
     }
 
-    .metric.warning .num {
-      color: var(--warning);
+    .metric.warn .num {
+      color: var(--warn);
     }
 
-    .metric.success .num {
-      color: var(--success);
-    }
-
-    .question-card {
-      border-left: 5px solid var(--kpmg-blue);
-      background: #f8fbff;
+    .section-block {
       padding: 18px;
-      border-radius: 14px;
-      margin-bottom: 16px;
+      margin-top: 16px;
+      box-shadow: none;
     }
 
-    .question-card h3 {
+    .section-block h3 {
       font-size: 17px;
-      margin-bottom: 8px;
-      color: var(--deep);
-    }
-
-    .question-card p {
-      color: #334155;
-      line-height: 1.7;
       margin-bottom: 10px;
-    }
-
-    .issue-table {
-      width: 100%;
-      border-collapse: collapse;
-      overflow: hidden;
-      border-radius: 14px;
-      font-size: 13px;
-    }
-
-    .issue-table th,
-    .issue-table td {
-      border-bottom: 1px solid var(--border);
-      text-align: left;
-      padding: 12px;
-      vertical-align: top;
-    }
-
-    .issue-table th {
-      background: #eef5ff;
-      color: var(--kpmg-blue);
-    }
-
-    .status {
-      font-weight: 800;
-    }
-
-    .status.missing {
-      color: var(--danger);
-    }
-
-    .status.warn {
-      color: var(--warning);
-    }
-
-    .status.ok {
-      color: var(--success);
-    }
-
-    .small {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.6;
-    }
-
-    .subsection {
-      margin-top: 26px;
-      padding-top: 22px;
-      border-top: 1px solid var(--border);
-    }
-
-    .json-loader {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
-      margin: 12px 0 18px;
-    }
-
-    .json-loader input {
-      max-width: 360px;
-      padding: 9px;
     }
 
     .table-wrap {
       overflow: auto;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      background: white;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #edf1f7;
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+      line-height: 1.4;
+    }
+
+    th {
+      background: #f3f6fa;
+      color: #334155;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .status {
+      display: inline-flex;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .status.ok {
+      background: var(--soft-ok);
+      color: var(--ok);
+    }
+
+    .status.warn {
+      background: var(--soft-warn);
+      color: var(--warn);
+    }
+
+    .status.missing {
+      background: var(--soft-bad);
+      color: var(--bad);
+    }
+
+    .json-loader {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .question-box {
+      border-left: 4px solid var(--warn);
+      background: #fffaf0;
+      border-radius: 7px;
+      padding: 14px 16px;
       margin-top: 12px;
     }
 
-    .table-wrap .issue-table {
-      min-width: 760px;
-    }
-
-    @media (max-width: 860px) {
+    @media (max-width: 920px) {
       header {
-        padding: 22px;
-        flex-direction: column;
+        padding: 20px;
         align-items: flex-start;
-        gap: 14px;
+        flex-direction: column;
       }
 
       .layout {
@@ -462,219 +467,226 @@
       }
 
       .form-grid,
-      .result-grid {
+      .program-grid,
+      .metrics {
         grid-template-columns: 1fr;
+      }
+
+      .panel {
+        padding: 18px;
       }
     }
   </style>
 </head>
-
 <body>
   <header>
-    <div class="title">
+    <div>
       <h1>AI-MESP Workpaper Copilot</h1>
-      <p>模块化追问式前端 Demo：选择场景 → 输入参数 → 上传证据 → 自动识别缺失项 → 定向补问</p>
+      <p>面向 MESP 底稿的智能取数、自动重算与异常复核助手</p>
     </div>
-    <div class="badge">Localhost Frontend Demo</div>
+    <div class="top-badge">Local Demo · SAP Evidence Mapping</div>
   </header>
 
   <main>
     <div class="layout">
       <aside class="sidebar">
-        <div class="step-item active" data-step="1">
-          <span class="step-index">1</span>
-          <span>选择测试场景</span>
+        <div class="step active" data-step="1">
+          <div class="step-index">1</div>
+          <div><strong>选择场景</strong><span>成本方法、程序和审计期间</span></div>
         </div>
-        <div class="step-item" data-step="2">
-          <span class="step-index">2</span>
-          <span>输入参数值</span>
+        <div class="step" data-step="2">
+          <div class="step-index">2</div>
+          <div><strong>输入参数</strong><span>样本量和作业类型</span></div>
         </div>
-        <div class="step-item" data-step="3">
-          <span class="step-index">3</span>
-          <span>上传支持文件</span>
+        <div class="step" data-step="3">
+          <div class="step-index">3</div>
+          <div><strong>上传证据</strong><span>CO03、KSBT、3611、CKM3</span></div>
         </div>
-        <div class="step-item" data-step="4">
-          <span class="step-index">4</span>
-          <span>自动识别缺失项</span>
+        <div class="step" data-step="4">
+          <div class="step-index">4</div>
+          <div><strong>复核结果</strong><span>异常、映射和追溯链</span></div>
         </div>
       </aside>
 
-      <section>
-        <div class="panel step-panel" id="step1">
-          <h2>第一步：选择测试场景</h2>
-          <p class="hint">
-            先确定审计期间和成本核算方法，再选择对应 MESP 测试程序，避免一次性把所有需求塞进长 Prompt。
-          </p>
-
-          <div class="field">
-            <label for="period">审计期间</label>
-            <input id="period" placeholder="例如：2025.01.01-2025.12.31" />
+      <section class="panel">
+        <div id="step1" class="step-panel">
+          <div class="panel-title">
+            <div>
+              <h2>选择测试场景</h2>
+              <p class="hint">先选择成本方法，再选择对应的 MESP 测试程序。系统会据此判断需要检查的支持文件和字段。</p>
+            </div>
           </div>
 
-          <div class="field">
-            <label for="costMethod">成本核算方法</label>
-            <select id="costMethod" onchange="renderPrograms()">
-              <option value="">请选择</option>
-              <option value="standard">标准成本法</option>
-              <option value="actual">实际成本法</option>
-            </select>
+          <div class="form-grid">
+            <div>
+              <label for="costMethod">成本方法</label>
+              <select id="costMethod" onchange="renderPrograms()">
+                <option value="">请选择</option>
+                <option value="standard">标准成本法</option>
+                <option value="actual">实际成本法</option>
+              </select>
+            </div>
+            <div>
+              <label for="period">审计期间</label>
+              <input id="period" value="2025.01.01-2025.12.31" />
+            </div>
           </div>
 
-          <div id="programList" class="program-list"></div>
+          <label>测试程序</label>
+          <div id="programList" class="program-grid"></div>
 
           <div class="actions">
-            <button class="btn-primary" onclick="goNext()">下一步：输入参数</button>
+            <button class="btn-primary" onclick="goNext()">下一步</button>
           </div>
         </div>
 
-        <div class="panel step-panel hidden" id="step2">
-          <h2>第二步：输入参数值</h2>
-          <p class="hint">
-            这里收集样本量、作业类型和差异阈值。后续系统会根据程序、样本量和文件命名规则判断缺失信息。
-          </p>
-
-          <div class="field">
-            <label for="sampleCount">样本量</label>
-            <input id="sampleCount" type="number" min="1" placeholder="例如：5" />
+        <div id="step2" class="step-panel hidden">
+          <div class="panel-title">
+            <div>
+              <h2>输入测试参数</h2>
+              <p class="hint">这些参数用于检查样本完整性、生成追问项，并在后续自动重算中作为基础口径。</p>
+            </div>
           </div>
 
-          <div class="field">
+          <div class="form-grid">
+            <div>
+              <label for="sampleCount">样本量</label>
+              <input id="sampleCount" type="number" min="1" value="5" />
+            </div>
+            <div>
+              <label for="threshold">明显微小差异阈值</label>
+              <input id="threshold" value="5,000" />
+            </div>
+          </div>
+          <div>
             <label for="activityTypes">作业类型</label>
-            <textarea id="activityTypes" placeholder="例如：Z001-直接人工、Z002-间接人工、Z003-折旧与摊销"></textarea>
-          </div>
-
-          <div class="field">
-            <label for="ctThreshold">明显微小差异阈值，可选</label>
-            <input id="ctThreshold" placeholder="例如：RMB 10,000" />
+            <textarea id="activityTypes">Z001-直接人工、Z002-间接人工、Z003-折旧与摊销</textarea>
           </div>
 
           <div class="actions">
-            <button class="btn-secondary" onclick="goStep(1)">上一步</button>
-            <button class="btn-primary" onclick="goNext()">下一步：上传支持文件</button>
+            <button class="btn-secondary" onclick="goStep(1)">返回</button>
+            <button class="btn-primary" onclick="goNext()">下一步</button>
           </div>
         </div>
 
-        <div class="panel step-panel hidden" id="step3">
-          <h2>第三步：上传支持文件</h2>
-          <p class="hint">
-            支持文件建议按照“样本编号-订单编号-报表类型-截图/表格”的规则命名，例如：
-            <strong>1.4500012345-CO03-截图.png</strong>、<strong>1.4500012345-CO03-表格.xlsx</strong>。
-          </p>
+        <div id="step3" class="step-panel hidden">
+          <div class="panel-title">
+            <div>
+              <h2>上传支持文件</h2>
+              <p class="hint">支持选择整个训练文件夹。命名示例：<strong>1.订单编号11000437-CO03-截图.png</strong>、<strong>1.订单编号11000437-CO03-表格.xlsx</strong>。</p>
+            </div>
+          </div>
 
           <div class="upload-box">
-            <strong>上传 CO03 / KSBT / 3611 / CKM3 的截图和表格</strong>
-            <p class="small">本 Demo 在浏览器端只检查文件名和基础规则，不会上传到服务器。</p>
-            <input id="supportFiles" type="file" multiple onchange="renderFileList()" />
+            <label for="supportFiles">选择 CO03 / KSBT / 3611 / CKM3 的截图和表格</label>
+            <input id="supportFiles" type="file" multiple webkitdirectory directory onchange="renderFileList()" />
+            <p class="small">浏览器端只做文件名完整性检查，不会上传到服务器。自动化引擎结果请导入本地生成的 JSON。</p>
+            <div id="fileList" class="file-list"><p class="small">尚未选择文件。</p></div>
           </div>
 
-          <div id="fileList" class="file-list"></div>
+          <div class="section-block">
+            <h3>导入自动化引擎结果</h3>
+            <p class="small">通过本地服务打开页面时，可直接扫描默认训练文件夹；如果双击 HTML 打开，请选择本地的 <strong>mesp_automation_result.json</strong>。</p>
+            <div class="json-loader">
+              <button class="btn-primary" onclick="runLocalEngine()">扫描本地训练文件夹</button>
+              <button class="btn-outline" onclick="loadAutomationResult()">读取同目录 JSON</button>
+              <input id="automationJsonInputStep3" type="file" accept=".json,application/json" onchange="loadAutomationJsonFile(this)" />
+              <span class="small" id="automationStatusStep3">尚未加载自动化结果。</span>
+            </div>
+          </div>
 
           <div class="actions">
-            <button class="btn-secondary" onclick="goStep(2)">上一步</button>
-            <button class="btn-primary" onclick="runCheck()">自动识别缺失项</button>
-            <button class="btn-outline" onclick="loadAutomationResult()">加载训练结果 Demo</button>
-          </div>
-
-          <div class="json-loader">
-            <span class="small">如果浏览器禁止自动读取本地 JSON，可直接选择 mesp_automation_result.json：</span>
-            <input id="automationJsonInputStep3" type="file" accept=".json,application/json" onchange="loadAutomationJsonFile(this)" />
+            <button class="btn-secondary" onclick="goStep(2)">返回</button>
+            <button class="btn-outline" onclick="runBrowserCheck()">仅检查文件名</button>
+            <button class="btn-primary" onclick="runLocalEngine()">运行自动化引擎</button>
           </div>
         </div>
 
-        <div class="panel step-panel hidden" id="step4">
-          <h2>第四步：AI 自动识别缺失项，并逐条追问</h2>
-          <p class="hint">
-            系统不是生成一次性长 Prompt，而是把缺失证据、缺失字段和逻辑异常拆成可回复的问题卡片。
-          </p>
+        <div id="step4" class="step-panel hidden">
+          <div class="panel-title">
+            <div>
+              <h2>复核结果</h2>
+              <p class="hint">这里展示支持文件完整性、表格字段映射、异常追问和 Evidence Traceability。</p>
+            </div>
+          </div>
 
-          <div class="result-grid">
-            <div class="metric danger">
-              <div>缺失支持文件</div>
-              <div class="num" id="missingFileCount">0</div>
+          <div class="metrics">
+            <div class="metric">
+              <div class="label">样本数</div>
+              <div class="num" id="sampleCountMetric">0</div>
             </div>
-            <div class="metric warning">
-              <div>待补充关键字段</div>
-              <div class="num" id="missingFieldCount">0</div>
-            </div>
-            <div class="metric success">
-              <div>已识别文件</div>
+            <div class="metric ok">
+              <div class="label">已识别文件</div>
               <div class="num" id="recognizedCount">0</div>
             </div>
+            <div class="metric warn">
+              <div class="label">缺失文件</div>
+              <div class="num" id="missingFileCount">0</div>
+            </div>
+            <div class="metric">
+              <div class="label">证据追溯项</div>
+              <div class="num" id="traceCount">0</div>
+            </div>
           </div>
 
-          <div id="currentQuestion" class="question-card"></div>
-
-          <div class="actions">
-            <button class="btn-outline" onclick="showPreviousQuestion()">上一条追问</button>
-            <button class="btn-primary" onclick="showNextQuestion()">下一条追问</button>
-            <button class="btn-secondary" onclick="copyQuestions()">复制全部追问</button>
+          <div class="section-block">
+            <h3>自动追问</h3>
+            <div id="questionBox" class="question-box">
+              <strong>尚未生成追问。</strong>
+              <p class="small">运行检查或导入自动化结果后显示。</p>
+            </div>
+            <div class="actions">
+              <button class="btn-secondary" onclick="prevQuestion()">上一条</button>
+              <button class="btn-secondary" onclick="nextQuestion()">下一条</button>
+            </div>
           </div>
 
-          <br />
-          <h3>缺失项明细</h3>
-          <br />
-          <table class="issue-table">
-            <thead>
-              <tr>
-                <th>类型</th>
-                <th>样本</th>
-                <th>问题</th>
-                <th>建议补充</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody id="issueBody"></tbody>
-          </table>
-
-          <div class="subsection">
-            <h3>自动化引擎结果</h3>
-            <p class="small">
-              可读取同目录下的 mesp_automation_result.json，或手动选择 JSON 文件导入。导入后会展示 CO03 字段映射、金额汇总和 Evidence Trace。
-            </p>
-            <div class="json-loader">
-              <button class="btn-outline" onclick="loadAutomationResult()">读取 mesp_automation_result.json</button>
-              <input id="automationJsonInput" type="file" accept=".json,application/json" onchange="loadAutomationJsonFile(this)" />
-              <span class="small" id="automationStatus">尚未加载自动化结果。</span>
-            </div>
-
-            <div class="result-grid">
-              <div class="metric">
-                <div>样本数</div>
-                <div class="num" id="automationSampleCount">0</div>
-              </div>
-              <div class="metric success">
-                <div>CO03 表格</div>
-                <div class="num" id="automationCo03Count">0</div>
-              </div>
-              <div class="metric warning">
-                <div>证据追溯项</div>
-                <div class="num" id="automationTraceCount">0</div>
-              </div>
-            </div>
-
-            <h3>CO03 字段映射与金额汇总</h3>
+          <div class="section-block">
+            <h3>异常与检查点</h3>
             <div class="table-wrap">
-              <table class="issue-table">
+              <table>
                 <thead>
                   <tr>
+                    <th>类型</th>
                     <th>样本</th>
-                    <th>订单号</th>
-                    <th>来源文件</th>
-                    <th>已映射字段</th>
-                    <th>总实际成本</th>
-                    <th>计划/实际差异</th>
+                    <th>问题</th>
+                    <th>建议</th>
+                    <th>状态</th>
                   </tr>
                 </thead>
-                <tbody id="co03MappingBody"></tbody>
+                <tbody id="issueBody"></tbody>
               </table>
             </div>
+          </div>
 
-            <h3 style="margin-top: 18px;">Evidence Traceability</h3>
+          <div class="section-block">
+            <h3>SAP 表格字段映射与金额汇总</h3>
             <div class="table-wrap">
-              <table class="issue-table">
+              <table>
                 <thead>
                   <tr>
                     <th>样本</th>
+                    <th>报表</th>
+                    <th>订单号</th>
+                    <th>来源文件</th>
+                    <th>行数</th>
+                    <th>已映射字段</th>
+                    <th>金额/数量汇总</th>
+                  </tr>
+                </thead>
+                <tbody id="workbookBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <h3>Evidence Traceability</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>样本</th>
+                    <th>报表</th>
                     <th>底稿字段</th>
                     <th>来源文件</th>
                     <th>来源 Sheet</th>
@@ -682,7 +694,7 @@
                     <th>状态</th>
                   </tr>
                 </thead>
-                <tbody id="evidenceTraceBody"></tbody>
+                <tbody id="traceBody"></tbody>
               </table>
             </div>
           </div>
@@ -710,8 +722,8 @@
       ]
     };
 
-    const requiredEvidence = ["CO03-截图", "CO03-表格", "KSBT-截图", "KSBT-表格", "3611-截图", "3611-表格", "CKM3-截图", "CKM3-表格"];
-
+    const reports = ["CO03", "KSBT", "3611", "CKM3"];
+    const requiredEvidence = reports.flatMap(report => [`${report}-截图`, `${report}-表格`]);
     let selectedProgram = null;
     let currentStep = 1;
     let issues = [];
@@ -724,10 +736,9 @@
       const box = document.getElementById("programList");
       box.innerHTML = "";
       selectedProgram = null;
-
       if (!method) return;
 
-      programMap[method].forEach((program) => {
+      programMap[method].forEach(program => {
         const item = document.createElement("div");
         item.className = "program";
         item.onclick = () => {
@@ -735,15 +746,10 @@
           item.classList.add("selected");
           selectedProgram = program;
         };
-
         item.innerHTML = `
-          <input type="radio" name="program" />
-          <div>
-            <div class="program-name">${program.name}</div>
-            <div class="program-code">${program.code}</div>
-            <div>${program.tags.map(tag => `<span class="pill">${tag}</span>`).join("")}</div>
-          </div>
-          <span class="small">选择</span>
+          <div class="program-name">${program.name}</div>
+          <div class="program-code">${program.code}</div>
+          <div>${program.tags.map(tag => `<span class="pill">${tag}</span>`).join("")}</div>
         `;
         box.appendChild(item);
       });
@@ -753,8 +759,7 @@
       currentStep = step;
       document.querySelectorAll(".step-panel").forEach(panel => panel.classList.add("hidden"));
       document.getElementById("step" + step).classList.remove("hidden");
-
-      document.querySelectorAll(".step-item").forEach(item => {
+      document.querySelectorAll(".step").forEach(item => {
         const itemStep = Number(item.dataset.step);
         item.classList.toggle("active", itemStep === step);
         item.classList.toggle("done", itemStep < step);
@@ -763,65 +768,103 @@
 
     function goNext() {
       if (currentStep === 1) {
-        const period = document.getElementById("period").value.trim();
-        if (!period) {
+        if (!document.getElementById("period").value.trim()) {
           alert("请先填写审计期间。");
           return;
         }
-
         if (!selectedProgram) {
           alert("请先选择一个测试程序。");
           return;
         }
       }
+      if (currentStep === 2 && !Number(document.getElementById("sampleCount").value)) {
+        alert("请填写样本量。");
+        return;
+      }
+      goStep(currentStep + 1);
+    }
 
-      if (currentStep === 2) {
-        const sampleCount = Number(document.getElementById("sampleCount").value);
-        if (!sampleCount) {
-          alert("请填写样本量。");
-          return;
+    function detectSample(path) {
+      const parts = path.split(/[\\/]/).filter(Boolean);
+      const baseName = parts[parts.length - 1] || path;
+      const stem = baseName.replace(/\.[^.]+$/, "");
+      const candidates = [stem, ...parts.slice().reverse()];
+      const patterns = [/样本\s*(\d+)/i, /sample\s*(\d+)/i, /^(\d+)[.\-_ ]/, /^(\d+)$/];
+
+      for (const text of candidates) {
+        for (const pattern of patterns) {
+          const match = text.match(pattern);
+          if (match) {
+            const sample = Number(match[1]);
+            if (sample >= 1 && sample <= 999 && !reports.includes(String(sample))) {
+              return sample;
+            }
+          }
         }
       }
+      return null;
+    }
 
-      goStep(currentStep + 1);
+    function detectOrder(path) {
+      const baseName = path.split(/[\\/]/).pop() || path;
+      const stem = baseName.replace(/\.[^.]+$/, "");
+      const patterns = [/订单编号\s*([A-Za-z0-9]+)/i, /订单号\s*([A-Za-z0-9]+)/i, /order\s*([A-Za-z0-9]+)/i];
+      for (const pattern of patterns) {
+        const match = stem.match(pattern);
+        if (match) return match[1];
+      }
+      const longNumber = stem.match(/(\d{6,})/);
+      return longNumber ? longNumber[1] : "";
     }
 
     function classifyFile(name) {
       const upper = name.toUpperCase();
-      const isScreenshot = /截图|SCREEN|PNG|JPG|JPEG|PDF/.test(upper);
-      const isTable = /表格|EXPORT|EXCEL|XLS|XLSX|CSV/.test(upper);
-
-      const report = ["CO03", "KSBT", "3611", "CKM3"].find(r => upper.includes(r));
-      const kind = isScreenshot ? "截图" : isTable ? "表格" : "未知";
-      const sampleMatch = name.match(/^(\d+)/);
-      const sampleNo = sampleMatch ? Number(sampleMatch[1]) : null;
-
-      return { report, kind, sampleNo };
+      const report = reports.find(item => upper.includes(item));
+      const kind = /表格|导出|EXPORT|EXCEL|XLS|XLSX|CSV/.test(upper)
+        ? "表格"
+        : /截图|SCREEN|IMAGE|PNG|JPG|JPEG|PDF/.test(upper)
+          ? "截图"
+          : "未知";
+      return {
+        report,
+        kind,
+        sampleNo: detectSample(name),
+        order: detectOrder(name)
+      };
     }
 
     function renderFileList() {
       const files = Array.from(document.getElementById("supportFiles").files || []);
       const box = document.getElementById("fileList");
       box.innerHTML = "";
-
       if (!files.length) {
-        box.innerHTML = '<p class="small">暂未选择文件。</p>';
+        box.innerHTML = '<p class="small">尚未选择文件。</p>';
         return;
       }
 
+      const summary = new Map();
       files.forEach(file => {
-        const meta = classifyFile(file.name);
+        const rel = file.webkitRelativePath || file.name;
+        const meta = classifyFile(rel);
+        const key = meta.sampleNo ? `样本 ${meta.sampleNo}` : "未识别样本";
+        const item = summary.get(key) || { total: 0, reports: new Set() };
+        item.total += 1;
+        if (meta.report && meta.kind !== "未知") item.reports.add(`${meta.report}-${meta.kind}`);
+        summary.set(key, item);
+      });
+
+      [...summary.entries()].sort().forEach(([sample, item]) => {
         const row = document.createElement("div");
         row.className = "file-row";
         row.innerHTML = `
-          <span class="file-name">${file.name}</span>
-          <span class="file-tag">${meta.sampleNo ? "样本" + meta.sampleNo : "未识别样本"} / ${meta.report || "未知报表"} / ${meta.kind}</span>
+          <span class="file-name">${sample}: ${item.total} 个文件</span>
+          <span class="file-tag">${item.reports.size}/${requiredEvidence.length} 项证据</span>
         `;
         box.appendChild(row);
       });
     }
 
-    function runCheck() {
+    function runBrowserCheck() {
       const files = Array.from(document.getElementById("supportFiles").files || []);
       const sampleCount = Number(document.getElementById("sampleCount").value);
       const period = document.getElementById("period").value.trim();
@@ -830,17 +873,15 @@
       issues = [];
       questions = [];
       questionIndex = 0;
-
       if (!files.length) {
-        alert("请先上传支持文件。");
+        alert("请先选择支持文件。");
         return;
       }
 
       const fileKeys = new Set();
       let recognized = 0;
-
       files.forEach(file => {
-        const meta = classifyFile(file.name);
+        const meta = classifyFile(file.webkitRelativePath || file.name);
         if (meta.sampleNo && meta.report && meta.kind !== "未知") {
           fileKeys.add(`${meta.sampleNo}-${meta.report}-${meta.kind}`);
           recognized += 1;
@@ -850,13 +891,12 @@
       for (let sample = 1; sample <= sampleCount; sample++) {
         requiredEvidence.forEach(req => {
           const [report, kind] = req.split("-");
-          const key = `${sample}-${report}-${kind}`;
-          if (!fileKeys.has(key)) {
+          if (!fileKeys.has(`${sample}-${report}-${kind}`)) {
             issues.push({
               type: "支持文件缺失",
               sample,
               problem: `样本 ${sample} 缺少 ${report} ${kind} 支持。`,
-              suggestion: `请补充命名类似“${sample}.订单编号-${report}-${kind}”的文件。`,
+              suggestion: `请补充命名类似“${sample}.订单编号xxxx-${report}-${kind}”的文件。`,
               status: "missing"
             });
           }
@@ -868,17 +908,7 @@
           type: "关键参数缺失",
           sample: "-",
           problem: "未填写作业类型。",
-          suggestion: "请补充例如：Z001-直接人工、Z002-间接人工、Z003-折旧与摊销。",
-          status: "warn"
-        });
-      }
-
-      if (selectedProgram && selectedProgram.code === "SPD03015") {
-        issues.push({
-          type: "关键计算字段待确认",
-          sample: "全部",
-          problem: "SPD03015 需要确认期初差异金额、期初库存、本期入库、本月出库和账面分摊金额。",
-          suggestion: "请确认 CKM3 导出表是否包含上述字段，并在 SAP 中选择全部字段布局。",
+          suggestion: "请补充 Z001、Z002、Z003 等作业类型口径。",
           status: "warn"
         });
       }
@@ -887,39 +917,147 @@
         type: "期间一致性检查",
         sample: "全部",
         problem: `需要检查 KSBT、3611、CKM3 的会计期间是否与审计期间 ${period} 一致。`,
-        suggestion: "请在下一步上传可识别期间字段的表格，或手工输入各报表期间。",
+        suggestion: "建议在导出表格中补充期间字段，或由用户手工确认各报表期间。",
         status: "warn"
       });
 
-      questions = issues.map((issue, index) => ({
-        title: `追问 ${index + 1}：${issue.type}`,
+      applyResult({
+        summary: {
+          sample_count: sampleCount,
+          recognized_file_count: recognized,
+          missing_file_count: issues.filter(item => item.status === "missing").length,
+          warning_count: issues.filter(item => item.status !== "missing").length
+        },
+        issues,
+        questions: issues.map((issue, index) => ({
+          title: `追问 ${index + 1}: ${issue.type}`,
+          body: issue.problem,
+          ask: issue.suggestion
+        })),
+        workbook_results: [],
+        evidence_trace: []
+      }, "已完成浏览器端文件名检查。");
+    }
+
+    async function loadAutomationResult() {
+      setStatus("正在读取 mesp_automation_result.json...");
+      try {
+        const response = await fetch("mesp_automation_result.json", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        applyResult(data, "已读取同目录 mesp_automation_result.json。");
+      } catch (error) {
+        setStatus("未能自动读取 JSON。请使用文件选择框导入 mesp_automation_result.json。");
+        console.warn("Unable to load automation JSON", error);
+      }
+    }
+
+    async function runLocalEngine() {
+      const period = document.getElementById("period").value.trim();
+      const program = selectedProgram ? selectedProgram.code : "";
+      setStatus("正在扫描本地 training_files/训练文件...");
+
+      try {
+        const query = new URLSearchParams({ period, program });
+        const response = await fetch(`/api/analyze?${query.toString()}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          throw new Error(data.error || `HTTP ${response.status}`);
+        }
+        applyResult(data, "已完成本地训练文件夹扫描，并刷新 mesp_automation_result.json。");
+      } catch (error) {
+        setStatus("无法连接本地自动化服务。请先运行 scripts/mesp_web_server.py，或手动导入 JSON。");
+        console.warn("Unable to run local engine", error);
+      }
+    }
+
+    function loadAutomationJsonFile(inputElement) {
+      const file = inputElement.files && inputElement.files[0];
+      if (!file) return;
+      setStatus(`正在导入 ${file.name}...`);
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(reader.result);
+          applyResult(data, `已导入 ${file.name}。`);
+        } catch (error) {
+          setStatus("JSON 解析失败，请确认文件内容来自 mesp_automation_result.json。");
+        }
+      };
+      reader.readAsText(file, "utf-8");
+    }
+
+    function setStatus(message) {
+      const a = document.getElementById("automationStatusStep3");
+      if (a) a.textContent = message;
+    }
+
+    function applyResult(data, message) {
+      automationResult = data;
+      issues = Array.isArray(data.issues) ? data.issues : [];
+      questions = Array.isArray(data.questions) ? data.questions : issues.map((issue, index) => ({
+        title: `追问 ${index + 1}: ${issue.type}`,
         body: issue.problem,
         ask: issue.suggestion
       }));
+      questionIndex = 0;
 
-      document.getElementById("missingFileCount").textContent = issues.filter(i => i.type === "支持文件缺失").length;
-      document.getElementById("missingFieldCount").textContent = issues.filter(i => i.type !== "支持文件缺失").length;
-      document.getElementById("recognizedCount").textContent = recognized;
+      document.getElementById("sampleCountMetric").textContent = data.summary?.sample_count ?? 0;
+      document.getElementById("recognizedCount").textContent = data.summary?.recognized_file_count ?? 0;
+      document.getElementById("missingFileCount").textContent = data.summary?.missing_file_count ?? 0;
+      document.getElementById("traceCount").textContent = Array.isArray(data.evidence_trace) ? data.evidence_trace.length : 0;
 
-      renderIssueTable();
-      renderCurrentQuestion();
-      clearAutomationResult();
+      renderQuestion();
+      renderIssues();
+      renderWorkbooks(data.workbook_results || data.co03_results || []);
+      renderTrace(data.evidence_trace || []);
+      setStatus(message);
       goStep(4);
     }
 
-    function renderIssueTable() {
+    function renderQuestion() {
+      const box = document.getElementById("questionBox");
+      if (!questions.length) {
+        box.innerHTML = '<strong>暂无追问。</strong><p class="small">支持文件和字段映射未发现需要补充的信息。</p>';
+        return;
+      }
+      const item = questions[questionIndex];
+      box.innerHTML = `
+        <strong>${item.title}</strong>
+        <p style="margin-top: 8px;">${item.body}</p>
+        <p class="small" style="margin-top: 8px;">${item.ask}</p>
+      `;
+    }
+
+    function prevQuestion() {
+      if (!questions.length) return;
+      questionIndex = (questionIndex - 1 + questions.length) % questions.length;
+      renderQuestion();
+    }
+
+    function nextQuestion() {
+      if (!questions.length) return;
+      questionIndex = (questionIndex + 1) % questions.length;
+      renderQuestion();
+    }
+
+    function renderIssues() {
       const body = document.getElementById("issueBody");
       body.innerHTML = "";
-
+      if (!issues.length) {
+        body.innerHTML = '<tr><td colspan="5" class="small">暂无异常。</td></tr>';
+        return;
+      }
       issues.forEach(issue => {
         const row = document.createElement("tr");
+        const status = issue.status === "missing" ? "missing" : issue.status === "warn" ? "warn" : "ok";
         const statusText = issue.status === "missing" ? "缺失" : issue.status === "warn" ? "待确认" : "已匹配";
         row.innerHTML = `
           <td>${issue.type}</td>
           <td>${issue.sample}</td>
           <td>${issue.problem}</td>
           <td>${issue.suggestion}</td>
-          <td class="status ${issue.status}">${statusText}</td>
+          <td><span class="status ${status}">${statusText}</span></td>
         `;
         body.appendChild(row);
       });
@@ -927,191 +1065,57 @@
 
     function formatAmount(value) {
       if (typeof value !== "number") return "-";
-      return value.toLocaleString("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      });
+      return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    async function loadAutomationResult(options = {}) {
-      const status = document.getElementById("automationStatus");
-      if (status) status.textContent = "正在读取 mesp_automation_result.json...";
-
-      try {
-        const response = await fetch("mesp_automation_result.json", { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        applyAutomationResult(data, "已读取同目录 mesp_automation_result.json。");
-      } catch (error) {
-        if (status) {
-          status.textContent = "未能自动读取 JSON。若是双击打开 HTML，请使用右侧文件选择框导入 mesp_automation_result.json。";
-        }
-        if (!options.silent) {
-          console.warn("Unable to load mesp_automation_result.json", error);
-        }
-      }
+    function renderTotals(totals) {
+      const entries = Object.entries(totals || {});
+      if (!entries.length) return "-";
+      return entries.slice(0, 4).map(([key, value]) => `${key}: ${formatAmount(value)}`).join("<br>");
     }
 
-    function loadAutomationJsonFile(inputElement) {
-      const input = inputElement || document.getElementById("automationJsonInput");
-      const file = input.files && input.files[0];
-      const status = document.getElementById("automationStatus");
-
-      if (!file) return;
-      if (status) status.textContent = `正在导入 ${file.name}...`;
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const data = JSON.parse(reader.result);
-          applyAutomationResult(data, `已导入 ${file.name}。`);
-        } catch (error) {
-          if (status) status.textContent = "JSON 解析失败，请确认文件内容来自 mesp_automation_result.json。";
-        }
-      };
-      reader.readAsText(file, "utf-8");
-    }
-
-    function applyAutomationResult(data, message) {
-      automationResult = data;
-      issues = Array.isArray(data.issues) ? data.issues : [];
-      questions = Array.isArray(data.questions) ? data.questions : issues.map((issue, index) => ({
-        title: `追问 ${index + 1}：${issue.type}`,
-        body: issue.problem,
-        ask: issue.suggestion
-      }));
-      questionIndex = 0;
-
-      document.getElementById("missingFileCount").textContent = data.summary?.missing_file_count ?? issues.filter(i => i.type === "支持文件缺失").length;
-      document.getElementById("missingFieldCount").textContent = data.summary?.warning_count ?? issues.filter(i => i.type !== "支持文件缺失").length;
-      document.getElementById("recognizedCount").textContent = data.summary?.recognized_file_count ?? 0;
-
-      renderIssueTable();
-      renderCurrentQuestion();
-      renderAutomationSummary(data);
-      renderCo03Mapping(data.co03_results || []);
-      renderEvidenceTrace(data.evidence_trace || []);
-      goStep(4);
-
-      const status = document.getElementById("automationStatus");
-      if (status) status.textContent = message;
-    }
-
-    function renderAutomationSummary(data) {
-      document.getElementById("automationSampleCount").textContent = data.summary?.sample_count ?? 0;
-      document.getElementById("automationCo03Count").textContent = data.summary?.co03_workbook_count ?? 0;
-      document.getElementById("automationTraceCount").textContent = Array.isArray(data.evidence_trace) ? data.evidence_trace.length : 0;
-    }
-
-    function renderCo03Mapping(items) {
-      const body = document.getElementById("co03MappingBody");
+    function renderWorkbooks(items) {
+      const body = document.getElementById("workbookBody");
       body.innerHTML = "";
-
       if (!items.length) {
-        body.innerHTML = '<tr><td colspan="6" class="small">暂无 CO03 表格映射结果。</td></tr>';
+        body.innerHTML = '<tr><td colspan="7" class="small">暂无表格映射结果。</td></tr>';
         return;
       }
-
       items.forEach(item => {
         const mappedCount = item.mapping ? Object.keys(item.mapping).length : 0;
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${item.sample}</td>
+          <td>${item.report || "CO03"}</td>
           <td>${item.order}</td>
           <td>${item.file}</td>
+          <td>${item.row_count ?? "-"}</td>
           <td>${mappedCount} 个字段</td>
-          <td>${formatAmount(item.totals?.["总实际成本"])}</td>
-          <td>${formatAmount(item.totals?.["计划/实际差异"])}</td>
+          <td>${renderTotals(item.totals)}</td>
         `;
         body.appendChild(row);
       });
     }
 
-    function renderEvidenceTrace(items) {
-      const body = document.getElementById("evidenceTraceBody");
+    function renderTrace(items) {
+      const body = document.getElementById("traceBody");
       body.innerHTML = "";
-
       if (!items.length) {
-        body.innerHTML = '<tr><td colspan="6" class="small">暂无证据追溯结果。</td></tr>';
+        body.innerHTML = '<tr><td colspan="7" class="small">暂无证据追溯结果。</td></tr>';
         return;
       }
-
-      items.slice(0, 80).forEach(item => {
+      items.slice(0, 160).forEach(item => {
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${item.sample}</td>
+          <td>${item.report || "-"}</td>
           <td>${item.workpaper_field}</td>
           <td>${item.source_file}</td>
           <td>${item.source_sheet}</td>
           <td>${item.source_header}</td>
-          <td class="status ok">${item.status}</td>
+          <td><span class="status ok">${item.status}</span></td>
         `;
         body.appendChild(row);
-      });
-    }
-
-    function clearAutomationResult() {
-      automationResult = null;
-      document.getElementById("automationSampleCount").textContent = "0";
-      document.getElementById("automationCo03Count").textContent = "0";
-      document.getElementById("automationTraceCount").textContent = "0";
-      document.getElementById("co03MappingBody").innerHTML = '<tr><td colspan="6" class="small">尚未加载自动化结果。</td></tr>';
-      document.getElementById("evidenceTraceBody").innerHTML = '<tr><td colspan="6" class="small">尚未加载自动化结果。</td></tr>';
-      document.getElementById("automationStatus").textContent = "尚未加载自动化结果。";
-      document.getElementById("automationJsonInput").value = "";
-      document.getElementById("automationJsonInputStep3").value = "";
-    }
-
-    function renderCurrentQuestion() {
-      const box = document.getElementById("currentQuestion");
-      if (!questions.length) {
-        box.innerHTML = `
-          <h3>未发现明显缺失项</h3>
-          <p>当前文件命名规则下未识别到缺失支持文件。后续可继续接入 Excel 字段读取和 OCR 识别。</p>
-        `;
-        return;
-      }
-
-      const q = questions[questionIndex];
-      box.innerHTML = `
-        <h3>${q.title}</h3>
-        <p>${q.body}</p>
-        <strong>请补充：</strong>
-        <p>${q.ask}</p>
-        <textarea placeholder="审计人员可在这里回复该追问，例如补充原因、上传计划或手工字段值。"></textarea>
-        <p class="small">当前第 ${questionIndex + 1} / ${questions.length} 条追问</p>
-      `;
-    }
-
-    function showNextQuestion() {
-      if (!questions.length) return;
-      questionIndex = Math.min(questionIndex + 1, questions.length - 1);
-      renderCurrentQuestion();
-    }
-
-    function showPreviousQuestion() {
-      if (!questions.length) return;
-      questionIndex = Math.max(questionIndex - 1, 0);
-      renderCurrentQuestion();
-    }
-
-    function copyQuestions() {
-      if (!questions.length) {
-        alert("暂无追问可复制。");
-        return;
-      }
-
-      const text = questions
-        .map(q => `${q.title}\n问题：${q.body}\n请补充：${q.ask}`)
-        .join("\n\n");
-
-      navigator.clipboard.writeText(text).then(() => {
-        alert("已复制全部追问。");
-      }).catch(() => {
-        alert("浏览器不支持自动复制，请手动复制页面内容。");
       });
     }
 
@@ -1120,19 +1124,16 @@
       issues = [];
       questions = [];
       questionIndex = 0;
+      automationResult = null;
       document.getElementById("costMethod").value = "";
       document.getElementById("programList").innerHTML = "";
-      document.getElementById("period").value = "";
-      document.getElementById("sampleCount").value = "";
-      document.getElementById("activityTypes").value = "";
-      document.getElementById("ctThreshold").value = "";
       document.getElementById("supportFiles").value = "";
-      document.getElementById("fileList").innerHTML = "";
-      clearAutomationResult();
+      document.getElementById("fileList").innerHTML = '<p class="small">尚未选择文件。</p>';
+      setStatus("尚未加载自动化结果。");
       goStep(1);
     }
 
-    clearAutomationResult();
+    renderPrograms();
   </script>
 </body>
 </html>
