@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shutil
 import sys
 import tempfile
@@ -18,7 +17,6 @@ if str(SCRIPTS_ROOT) not in sys.path:
 from mesp_automation_engine import analyze_folder  # noqa: E402
 from spd03015_exporter import build_spd03015_bytes  # noqa: E402
 from supporting_exporter import build_supporting_bytes  # noqa: E402
-from workpaper_exporter import build_workpaper_bytes  # noqa: E402
 
 
 st.set_page_config(
@@ -161,6 +159,21 @@ if analyze_clicked:
             (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
             selected_spd_bytes = build_spd03015_bytes(spp_dir, program=program)
 
+    st.session_state["analysis_bundle"] = {
+        "result": result,
+        "program": program,
+        "supporting_bytes": supporting_bytes,
+        "selected_spd_bytes": selected_spd_bytes,
+    }
+
+bundle = st.session_state.get("analysis_bundle")
+
+if bundle:
+    result = bundle["result"]
+    selected_program = bundle["program"]
+    supporting_bytes = bundle["supporting_bytes"]
+    selected_spd_bytes = bundle["selected_spd_bytes"]
+
     summary = result.get("summary", {})
     cols = st.columns(5)
     cols[0].metric("样本数", summary.get("sample_count", 0))
@@ -169,8 +182,8 @@ if analyze_clicked:
     cols[3].metric("表格数", summary.get("workbook_count", 0))
     cols[4].metric("追溯项", len(result.get("evidence_trace") or []))
 
-    tab_issues, tab_workbooks, tab_trace, tab_json = st.tabs(
-        ["异常与追问", "SAP 表格映射", "Evidence Traceability", "JSON"]
+    tab_issues, tab_workbooks, tab_trace, tab_download = st.tabs(
+        ["异常与追问", "SAP 表格映射", "Evidence Traceability", "底稿结果下载"]
     )
 
     with tab_issues:
@@ -182,8 +195,7 @@ if analyze_clicked:
     with tab_trace:
         render_trace(result.get("evidence_trace") or [])
 
-    with tab_json:
-        workbook_bytes = build_workpaper_bytes(result)
+    with tab_download:
         st.download_button(
             "下载 SPP Supporting Excel",
             data=supporting_bytes,
@@ -192,25 +204,11 @@ if analyze_clicked:
             type="secondary",
         )
         st.download_button(
-            f"下载 {program}_IRM(SAP)",
+            f"下载 {selected_program}_IRM(SAP)",
             data=selected_spd_bytes,
-            file_name=f"AI-MESP_{program}_IRM(SAP).xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="secondary",
-        )
-        st.download_button(
-            "下载 Excel 底稿",
-            data=workbook_bytes,
-            file_name="AI-MESP_Workpaper_Output.xlsx",
+            file_name=f"AI-MESP_{selected_program}_IRM(SAP).xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
         )
-        st.download_button(
-            "下载 mesp_automation_result.json",
-            data=json.dumps(result, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
-            file_name="mesp_automation_result.json",
-            mime="application/json",
-        )
-        st.json(result)
 else:
     st.info("请上传 CO03、KSBT、3611、CKM3 支持文件。若包含多个样本，推荐上传 zip 包。")
