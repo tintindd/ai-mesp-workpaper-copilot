@@ -412,6 +412,11 @@ def _populate_template_ckm3(sheet, samples: list[Spd03015Sample]) -> dict[int, d
 
 
 def _populate_template_spd(sheet, samples: list[Spd03015Sample], ck_rows: dict[int, dict[str, int]]) -> None:
+    blue_fill = PatternFill("solid", fgColor="FF00338D")
+    for row in [2, 3]:
+        for col in range(1, 38):
+            sheet.cell(row, col).fill = blue_fill
+
     for row in range(19, 24):
         for col in [2, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15]:
             sheet.cell(row, col).value = None
