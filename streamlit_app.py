@@ -129,7 +129,7 @@ with st.sidebar:
     period = st.text_input("审计期间", value="2025.01.01-2025.12.31")
     program = st.selectbox(
         "测试程序",
-        ["SPD03015", "SPD03012", "SPD03014", "SPD03011", "SPD03013"],
+        ["SPD03012", "SPD03014", "SPD03015"],
         index=0,
     )
     st.info("建议上传 zip 文件以保留样本文件夹结构，例如 样本1、样本2。")
@@ -159,7 +159,7 @@ if analyze_clicked:
             spp_dir = temp_dir / "_generated_spp"
             spp_dir.mkdir(parents=True, exist_ok=True)
             (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
-            spd03015_bytes = build_spd03015_bytes(spp_dir)
+            selected_spd_bytes = build_spd03015_bytes(spp_dir, program=program)
 
     summary = result.get("summary", {})
     cols = st.columns(5)
@@ -192,9 +192,9 @@ if analyze_clicked:
             type="secondary",
         )
         st.download_button(
-            "下载 SPD03012+SPD03014+SPD03015_IRM(SAP)",
-            data=spd03015_bytes,
-            file_name="AI-MESP_SPD03012_SPD03014_SPD03015_IRM(SAP).xlsx",
+            f"下载 {program}_IRM(SAP)",
+            data=selected_spd_bytes,
+            file_name=f"AI-MESP_{program}_IRM(SAP).xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="secondary",
         )

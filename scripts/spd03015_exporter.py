@@ -39,6 +39,11 @@ SPD03012_EXPENSES = [
 SPD03012_TABLE_A_START_ROWS = {1: 38, 2: 50, 3: 62, 4: 74, 5: 86}
 SPD03012_TABLE_B_START_ROW = 103
 IRM_EXPENSES = [*SPD03012_EXPENSES, *SPD03014_EXPENSES]
+PROGRAM_SHEETS = {
+    "SPD03012": "SPD03012-IRM(SAP)",
+    "SPD03014": "SPD03014_IRM(SAP)",
+    "SPD03015": "SPD03015_IRM(SAP)",
+}
 
 
 @dataclass
@@ -807,7 +812,7 @@ def _build_spd03014_data(source_folder: Path, samples: list[Spd03015Sample]) -> 
                 "sample": sample.sample,
                 "order": sample.order,
                 "product_id": product_id,
-                "cost_center": co03.get("cost_center", ""),
+                "cost_center": "",
                 "expenses": expense_rows,
             }
         )
@@ -978,7 +983,7 @@ def _build_spd03012_data(source_folder: Path, samples: list[Spd03015Sample]) -> 
                 "sample": sample.sample,
                 "order": sample.order,
                 "product_id": product_id,
-                "cost_center": co03.get("cost_center", ""),
+                "cost_center": "",
                 "expenses": expense_rows,
             }
         )
@@ -1109,13 +1114,38 @@ def _populate_template_spd03012(sheet, source_folder: Path, samples: list[Spd030
             sheet.cell(row, 13, f"=L{row}-K{row}")
 
 
-def _build_from_template(samples: list[Spd03015Sample], source_folder: Path) -> Workbook:
+def _normalize_programs(programs: str | list[str] | tuple[str, ...] | set[str] | None) -> set[str]:
+    if programs is None:
+        return set(PROGRAM_SHEETS)
+    if isinstance(programs, str):
+        values = [programs]
+    else:
+        values = list(programs)
+    selected = {str(value).upper().replace("_IRM(SAP)", "").strip() for value in values}
+    unsupported = selected - set(PROGRAM_SHEETS)
+    if unsupported:
+        raise ValueError(f"Unsupported SPD program(s): {', '.join(sorted(unsupported))}")
+    return selected
+
+
+def _build_from_template(
+    samples: list[Spd03015Sample],
+    source_folder: Path,
+    programs: str | list[str] | tuple[str, ...] | set[str] | None = None,
+) -> Workbook:
+    selected = _normalize_programs(programs)
     workbook = load_workbook(TEMPLATE_PATH, data_only=False)
-    if "SPD03012-IRM(SAP)" in workbook.sheetnames:
+    if "SPD03012" in selected and "SPD03012-IRM(SAP)" in workbook.sheetnames:
         _populate_template_spd03012(workbook["SPD03012-IRM(SAP)"], source_folder, samples)
-    if "SPD03014_IRM(SAP)" in workbook.sheetnames:
+    if "SPD03014" in selected and "SPD03014_IRM(SAP)" in workbook.sheetnames:
         _populate_template_spd03014(workbook["SPD03014_IRM(SAP)"], source_folder, samples)
-    _populate_template_spd(workbook["SPD03015_IRM(SAP)"], samples)
+    if "SPD03015" in selected and "SPD03015_IRM(SAP)" in workbook.sheetnames:
+        _populate_template_spd(workbook["SPD03015_IRM(SAP)"], samples)
+
+    keep_sheets = {PROGRAM_SHEETS[program] for program in selected}
+    for sheet_name in list(workbook.sheetnames):
+        if sheet_name == "CKM3" or sheet_name in PROGRAM_SHEETS.values() and sheet_name not in keep_sheets:
+            del workbook[sheet_name]
     if "CKM3" in workbook.sheetnames:
         del workbook["CKM3"]
     workbook.calculation.fullCalcOnLoad = True
@@ -1123,10 +1153,13 @@ def _build_from_template(samples: list[Spd03015Sample], source_folder: Path) -> 
     return workbook
 
 
-def build_spd03015_workbook(source_folder: Path) -> Workbook:
+def build_spd03015_workbook(
+    source_folder: Path,
+    program: str | list[str] | tuple[str, ...] | set[str] | None = None,
+) -> Workbook:
     samples = _discover_samples(source_folder)
     if TEMPLATE_PATH.exists():
-        return _build_from_template(samples, source_folder)
+        return _build_from_template(samples, source_folder, program)
 
     workbook = Workbook()
     ck_rows = _build_ckm3_sheet(workbook, samples)
@@ -1138,8 +1171,11 @@ def build_spd03015_workbook(source_folder: Path) -> Workbook:
     return workbook
 
 
-def build_spd03015_bytes(source_folder: Path) -> bytes:
-    workbook = build_spd03015_workbook(source_folder)
+def build_spd03015_bytes(
+    source_folder: Path,
+    program: str | list[str] | tuple[str, ...] | set[str] | None = None,
+) -> bytes:
+    workbook = build_spd03015_workbook(source_folder, program)
     stream = BytesIO()
     workbook.save(stream)
     return stream.getvalue()
