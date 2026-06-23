@@ -452,6 +452,25 @@ def _copy_row_style(sheet, source_row: int, target_row: int, max_col: int = 37, 
             target.value = source.value
 
 
+def _shift_merged_ranges_for_insert(sheet, insert_at: int, row_count: int) -> list[str]:
+    merged_ranges_to_shift = [
+        str(cell_range) for cell_range in sheet.merged_cells.ranges if cell_range.min_row >= insert_at
+    ]
+    for cell_range in merged_ranges_to_shift:
+        sheet.unmerge_cells(cell_range)
+    return merged_ranges_to_shift
+
+
+def _restore_shifted_merged_ranges(sheet, merged_ranges: list[str], row_count: int) -> None:
+    for cell_range in merged_ranges:
+        min_col, min_row, max_col, max_row = range_boundaries(cell_range)
+        shifted_range = (
+            f"{get_column_letter(min_col)}{min_row + row_count}:"
+            f"{get_column_letter(max_col)}{max_row + row_count}"
+        )
+        sheet.merge_cells(shifted_range)
+
+
 def _ensure_template_sample_rows(sheet, sample_count: int) -> None:
     if sample_count <= 5:
         return
@@ -460,22 +479,10 @@ def _ensure_template_sample_rows(sheet, sample_count: int) -> None:
     insert_at = 24
     template_row = 23
     static_values = {col: sheet.cell(template_row, col).value for col in [9, 10, 16, 17, 18]}
-    merged_ranges_to_shift = [
-        str(cell_range) for cell_range in sheet.merged_cells.ranges if cell_range.min_row >= insert_at
-    ]
-
-    for cell_range in merged_ranges_to_shift:
-        sheet.unmerge_cells(cell_range)
+    merged_ranges_to_shift = _shift_merged_ranges_for_insert(sheet, insert_at, extra_rows)
 
     sheet.insert_rows(insert_at, extra_rows)
-
-    for cell_range in merged_ranges_to_shift:
-        min_col, min_row, max_col, max_row = range_boundaries(cell_range)
-        shifted_range = (
-            f"{get_column_letter(min_col)}{min_row + extra_rows}:"
-            f"{get_column_letter(max_col)}{max_row + extra_rows}"
-        )
-        sheet.merge_cells(shifted_range)
+    _restore_shifted_merged_ranges(sheet, merged_ranges_to_shift, extra_rows)
 
     for row in range(insert_at, insert_at + extra_rows):
         _copy_row_style(sheet, template_row, row, copy_static_values=False)
@@ -660,12 +667,82 @@ def _build_spd03014_data(source_folder: Path, samples: list[Spd03015Sample]) -> 
     return results
 
 
+def _copy_row_all(sheet, source_row: int, target_row: int, max_col: int = 26) -> None:
+    sheet.row_dimensions[target_row].height = sheet.row_dimensions[source_row].height
+    for col in range(1, max_col + 1):
+        source = sheet.cell(source_row, col)
+        target = sheet.cell(target_row, col)
+        target.value = source.value
+        if source.has_style:
+            target.font = copy(source.font)
+            target.fill = copy(source.fill)
+            target.border = copy(source.border)
+            target.alignment = copy(source.alignment)
+            target.number_format = source.number_format
+            target.protection = copy(source.protection)
+
+
+def _copy_merged_ranges_with_offset(sheet, source_start: int, source_end: int, row_offset: int) -> None:
+    source_ranges = [
+        str(cell_range)
+        for cell_range in sheet.merged_cells.ranges
+        if cell_range.min_row >= source_start and cell_range.max_row <= source_end
+    ]
+    for cell_range in source_ranges:
+        min_col, min_row, max_col, max_row = range_boundaries(cell_range)
+        shifted_range = (
+            f"{get_column_letter(min_col)}{min_row + row_offset}:"
+            f"{get_column_letter(max_col)}{max_row + row_offset}"
+        )
+        sheet.merge_cells(shifted_range)
+
+
+def _ensure_spd03014_sample_rows(sheet, sample_count: int) -> None:
+    if sample_count <= 5:
+        return
+
+    extra_samples = sample_count - 5
+    table_a_insert_at = 143
+    table_a_rows = extra_samples * 24
+    shifted = _shift_merged_ranges_for_insert(sheet, table_a_insert_at, table_a_rows)
+    sheet.insert_rows(table_a_insert_at, table_a_rows)
+    _restore_shifted_merged_ranges(sheet, shifted, table_a_rows)
+
+    for extra_index in range(extra_samples):
+        target_start = table_a_insert_at + extra_index * 24
+        row_offset = target_start - 119
+        for offset in range(24):
+            _copy_row_all(sheet, 119 + offset, target_start + offset)
+        _copy_merged_ranges_with_offset(sheet, 119, 142, row_offset)
+
+    table_b_insert_at = 167 + table_a_rows
+    table_b_rows = extra_samples * 4
+    shifted = _shift_merged_ranges_for_insert(sheet, table_b_insert_at, table_b_rows)
+    sheet.insert_rows(table_b_insert_at, table_b_rows)
+    _restore_shifted_merged_ranges(sheet, shifted, table_b_rows)
+
+    for extra_index in range(extra_samples):
+        target_start = table_b_insert_at + extra_index * 4
+        for offset in range(4):
+            _copy_row_all(sheet, 163 + offset + table_a_rows, target_start + offset)
+
+
+def _spd03014_table_a_start(sample_index: int) -> int:
+    if sample_index <= 5:
+        return SPD03014_TABLE_A_START_ROWS[sample_index]
+    return 143 + (sample_index - 6) * 24
+
+
+def _spd03014_table_b_start(sample_index: int, sample_count: int) -> int:
+    base = SPD03014_TABLE_B_START_ROW + max(sample_count - 5, 0) * 24
+    return base + (sample_index - 1) * 4
+
+
 def _populate_template_spd03014(sheet, source_folder: Path, samples: list[Spd03015Sample]) -> None:
-    data = _build_spd03014_data(source_folder, samples[:5])
+    _ensure_spd03014_sample_rows(sheet, len(samples))
+    data = _build_spd03014_data(source_folder, samples)
     for sample_index, sample_data in enumerate(data, 1):
-        block_start = SPD03014_TABLE_A_START_ROWS.get(sample_index)
-        if not block_start:
-            continue
+        block_start = _spd03014_table_a_start(sample_index)
 
         for expense_index, expense_data in enumerate(sample_data["expenses"]):
             row = block_start + expense_index * 6
@@ -687,7 +764,7 @@ def _populate_template_spd03014(sheet, source_folder: Path, samples: list[Spd030
             sheet.cell(row, 17, f"=P{row}-K{row}")
             sheet.cell(row, 20, f"=N{row}")
 
-        table_b_start = SPD03014_TABLE_B_START_ROW + (sample_index - 1) * 4
+        table_b_start = _spd03014_table_b_start(sample_index, len(data))
         for expense_index, expense_data in enumerate(sample_data["expenses"]):
             table_a_row = block_start + expense_index * 6
             row = table_b_start + expense_index
