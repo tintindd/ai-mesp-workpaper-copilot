@@ -32,6 +32,13 @@ SPD03014_EXPENSES = [
 ]
 SPD03014_TABLE_A_START_ROWS = {1: 23, 2: 47, 3: 71, 4: 95, 5: 119}
 SPD03014_TABLE_B_START_ROW = 147
+SPD03012_EXPENSES = [
+    ("直接人工", "9043000100"),
+    ("折旧与摊销", "9043000300"),
+]
+SPD03012_TABLE_A_START_ROWS = {1: 38, 2: 50, 3: 62, 4: 74, 5: 86}
+SPD03012_TABLE_B_START_ROW = 103
+IRM_EXPENSES = [*SPD03012_EXPENSES, *SPD03014_EXPENSES]
 
 
 @dataclass
@@ -587,7 +594,7 @@ def _extract_co03_spd03014(path: Path | None) -> dict[str, Any]:
                 product_id = match.group(1)
 
         cost_element = str(_cell_value(row, index, "成本要素") or "")
-        for expense, code in SPD03014_EXPENSES:
+        for expense, code in IRM_EXPENSES:
             if cost_element == code:
                 cost_center = str(_cell_value(row, index, "成本中心") or cost_center)
                 expenses[expense] = {
@@ -605,14 +612,14 @@ def _extract_ksbt_rates(path: Path | None) -> dict[str, dict[str, float]]:
     if not rows:
         return {}
     index = _header_index(rows[0])
-    rates: dict[str, dict[str, float]] = {expense: {"plan": 0.0, "actual": 0.0} for expense, _ in SPD03014_EXPENSES}
+    rates: dict[str, dict[str, float]] = {expense: {"plan": 0.0, "actual": 0.0} for expense, _ in IRM_EXPENSES}
 
     for row in rows[1:]:
         text = str(_cell_value(row, index, "作业类型短文本") or "")
         price = abs(numeric(_cell_value(row, index, "Fix+可变价格", "固定+可变价格", "总价格")))
         row_type = str(_cell_value(row, index, "A") or "").upper()
         prt = numeric(_cell_value(row, index, "PrT"))
-        for expense, _ in SPD03014_EXPENSES:
+        for expense, _ in IRM_EXPENSES:
             if expense in text:
                 if row_type == "A" or prt == 5:
                     rates[expense]["actual"] = price
@@ -627,12 +634,12 @@ def _extract_3611_amounts(path: Path | None) -> dict[str, float]:
     if not rows:
         return {}
     index = _header_index(rows[0])
-    amounts = {expense: 0.0 for expense, _ in SPD03014_EXPENSES}
+    amounts = {expense: 0.0 for expense, _ in IRM_EXPENSES}
 
     for row in rows[1:]:
         name = str(_cell_value(row, index, "成本要素名称", "成本要素 (文本)") or "")
         amount = abs(numeric(_cell_value(row, index, "实际成本", "差异(绝对)")))
-        for expense, _ in SPD03014_EXPENSES:
+        for expense, _ in IRM_EXPENSES:
             if expense in name or (expense == "其他" and "其他" in name):
                 amounts[expense] = amount
 
@@ -810,8 +817,143 @@ def _populate_template_spd03014(sheet, source_folder: Path, samples: list[Spd030
             sheet.cell(row, 13, f"=L{row}-K{row}")
 
 
+def _build_spd03012_data(source_folder: Path, samples: list[Spd03015Sample]) -> list[dict[str, Any]]:
+    results = []
+    for sample in samples:
+        co03 = _extract_co03_spd03014(_find_report_file(source_folder, sample.sample, "CO03"))
+        ksbt = _extract_ksbt_rates(_find_report_file(source_folder, sample.sample, "KSBT"))
+        amounts_3611 = _extract_3611_amounts(_find_report_file(source_folder, sample.sample, "3611"))
+        product_id = co03.get("product_id") or _product_id_from_ckm3(sample.ckm3_path) or sample.material_id or sample.order
+
+        expense_rows = []
+        for expense, _ in SPD03012_EXPENSES:
+            co03_expense = (co03.get("expenses") or {}).get(expense, {})
+            actual_rate = (ksbt.get(expense) or {}).get("actual", 0.0)
+            amount_3611 = amounts_3611.get(expense, 0.0)
+            denominator = round(amount_3611 / actual_rate) if actual_rate else 0
+            actual_absorption_rate = amount_3611 / denominator if denominator else 0.0
+            expense_rows.append(
+                {
+                    "expense": expense,
+                    "qty": co03_expense.get("qty", 0.0),
+                    "plan": co03_expense.get("plan", 0.0),
+                    "actual": co03_expense.get("actual", 0.0),
+                    "variance": co03_expense.get("variance", 0.0),
+                    "actual_rate": actual_rate,
+                    "plan_rate": (ksbt.get(expense) or {}).get("plan", 0.0),
+                    "actual_absorption_rate": actual_absorption_rate,
+                }
+            )
+
+        results.append(
+            {
+                "sample": sample.sample,
+                "order": sample.order,
+                "product_id": product_id,
+                "cost_center": co03.get("cost_center", ""),
+                "expenses": expense_rows,
+            }
+        )
+
+    return results
+
+
+def _ensure_spd03012_sample_rows(sheet, sample_count: int) -> None:
+    if sample_count <= 5:
+        return
+
+    extra_samples = sample_count - 5
+    table_a_insert_at = 98
+    table_a_rows = extra_samples * 12
+    shifted = _shift_merged_ranges_for_insert(sheet, table_a_insert_at, table_a_rows)
+    sheet.insert_rows(table_a_insert_at, table_a_rows)
+    _restore_shifted_merged_ranges(sheet, shifted, table_a_rows)
+
+    for extra_index in range(extra_samples):
+        target_start = table_a_insert_at + extra_index * 12
+        row_offset = target_start - 86
+        for offset in range(12):
+            _copy_row_all(sheet, 86 + offset, target_start + offset)
+        _copy_merged_ranges_with_offset(sheet, 86, 97, row_offset)
+
+    table_b_insert_at = 113 + table_a_rows
+    table_b_rows = extra_samples * 2
+    shifted = _shift_merged_ranges_for_insert(sheet, table_b_insert_at, table_b_rows)
+    sheet.insert_rows(table_b_insert_at, table_b_rows)
+    _restore_shifted_merged_ranges(sheet, shifted, table_b_rows)
+
+    for extra_index in range(extra_samples):
+        target_start = table_b_insert_at + extra_index * 2
+        for offset in range(2):
+            _copy_row_all(sheet, 111 + offset + table_a_rows, target_start + offset)
+
+
+def _spd03012_table_a_start(sample_index: int) -> int:
+    if sample_index <= 5:
+        return SPD03012_TABLE_A_START_ROWS[sample_index]
+    return 98 + (sample_index - 6) * 12
+
+
+def _spd03012_table_b_start(sample_index: int, sample_count: int) -> int:
+    base = SPD03012_TABLE_B_START_ROW + max(sample_count - 5, 0) * 12
+    return base + (sample_index - 1) * 2
+
+
+def _populate_template_spd03012(sheet, source_folder: Path, samples: list[Spd03015Sample]) -> None:
+    _ensure_spd03012_sample_rows(sheet, len(samples))
+    data = _build_spd03012_data(source_folder, samples)
+    for sample_index, sample_data in enumerate(data, 1):
+        block_start = _spd03012_table_a_start(sample_index)
+        sample_no = sample_data["sample"]
+        screenshot_type = _document_type_for_report(source_folder, sample_no, "CO03", prefer_image=True)
+        co03_table_type = _document_type_for_report(source_folder, sample_no, "CO03", prefer_image=False)
+
+        for expense_index, expense_data in enumerate(sample_data["expenses"]):
+            row = block_start + expense_index * 6
+            sheet.cell(row, 2, f"样本{sample_data['sample']}")
+            sheet.cell(row, 3, sample_data["order"])
+            sheet.cell(row, 4, sample_data["cost_center"])
+            sheet.cell(row, 5, expense_data["expense"])
+            sheet.cell(row, 6, expense_data["plan"])
+            sheet.cell(row, 7, expense_data["actual"])
+            sheet.cell(row, 8, expense_data["variance"])
+            sheet.cell(row, 9, expense_data["actual_rate"])
+            sheet.cell(row, 10, f"=L{row}*N{row}-F{row}")
+            sheet.cell(row, 11, f"=H{row}-J{row}")
+            sheet.cell(row, 12, expense_data["qty"])
+            sheet.cell(row, 13, "不适用")
+            sheet.cell(row, 14, expense_data["actual_absorption_rate"])
+            sheet.cell(row, 15, f"=N{row}-I{row}")
+            sheet.cell(row, 18, f"=L{row}")
+            for doc_offset in range(6):
+                sheet.cell(row + doc_offset, 17, co03_table_type if doc_offset == 4 else screenshot_type)
+
+        table_b_start = _spd03012_table_b_start(sample_index, len(data))
+        for expense_index, expense_data in enumerate(sample_data["expenses"]):
+            table_a_row = block_start + expense_index * 6
+            row = table_b_start + expense_index
+            qty = expense_data["qty"]
+            standard_unit_cost = expense_data["plan"] / qty if qty else expense_data["plan_rate"]
+            standard_total = standard_unit_cost * qty if qty else expense_data["plan"]
+
+            sheet.cell(row, 2, f"样本{sample_data['sample']}")
+            sheet.cell(row, 3, sample_data["product_id"])
+            sheet.cell(row, 4, sample_data["cost_center"])
+            sheet.cell(row, 5, sample_data["order"])
+            sheet.cell(row, 6, expense_data["expense"])
+            sheet.cell(row, 7, standard_unit_cost)
+            sheet.cell(row, 8, qty)
+            sheet.cell(row, 9, standard_total)
+            sheet.cell(row, 10, expense_data["actual"])
+            sheet.cell(row, 11, f"=J{row}-I{row}")
+            sheet.cell(row, 12, f"=H{table_a_row}")
+            sheet.cell(row, 13, f"=L{row}-K{row}")
+
+
 def _build_from_template(samples: list[Spd03015Sample], source_folder: Path) -> Workbook:
     workbook = load_workbook(TEMPLATE_PATH, data_only=False)
+    if "SPD03012-IRM(SAP)" in workbook.sheetnames:
+        _populate_template_spd03012(workbook["SPD03012-IRM(SAP)"], source_folder, samples)
     if "SPD03014_IRM(SAP)" in workbook.sheetnames:
         _populate_template_spd03014(workbook["SPD03014_IRM(SAP)"], source_folder, samples)
     _populate_template_spd(workbook["SPD03015_IRM(SAP)"], samples)
