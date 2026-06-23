@@ -587,8 +587,45 @@ def _restore_shifted_merged_ranges(sheet, merged_ranges: list[str], row_count: i
         sheet.merge_cells(shifted_range)
 
 
+def _delete_rows_preserving_merges(sheet, start_row: int, row_count: int) -> None:
+    if row_count <= 0:
+        return
+
+    end_row = start_row + row_count - 1
+    affected_ranges = [
+        str(cell_range)
+        for cell_range in sheet.merged_cells.ranges
+        if cell_range.max_row >= start_row
+    ]
+    for cell_range in affected_ranges:
+        sheet.unmerge_cells(cell_range)
+
+    sheet.delete_rows(start_row, row_count)
+
+    for cell_range in affected_ranges:
+        min_col, min_row, max_col, max_row = range_boundaries(cell_range)
+        if min_row >= start_row and max_row <= end_row:
+            continue
+        if min_row > end_row:
+            min_row -= row_count
+            max_row -= row_count
+        elif min_row < start_row <= max_row:
+            max_row = max(start_row - 1, max_row - row_count)
+        elif start_row <= min_row <= end_row < max_row:
+            min_row = start_row
+            max_row -= row_count
+        if min_row <= max_row:
+            sheet.merge_cells(
+                f"{get_column_letter(min_col)}{min_row}:"
+                f"{get_column_letter(max_col)}{max_row}"
+            )
+
+
 def _ensure_template_sample_rows(sheet, sample_count: int) -> None:
-    if sample_count <= 5:
+    if sample_count < 5:
+        _delete_rows_preserving_merges(sheet, 19 + sample_count, 5 - sample_count)
+        return
+    if sample_count == 5:
         return
 
     extra_rows = sample_count - 5
@@ -614,7 +651,7 @@ def _populate_template_spd(sheet, samples: list[Spd03015Sample]) -> None:
 
     _ensure_template_sample_rows(sheet, len(samples))
 
-    last_sample_row = 18 + max(len(samples), 5)
+    last_sample_row = 18 + len(samples)
     for row in range(19, last_sample_row + 1):
         for col in [2, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15]:
             sheet.cell(row, col).value = None
@@ -851,7 +888,16 @@ def _copy_merged_ranges_with_offset(sheet, source_start: int, source_end: int, r
 
 
 def _ensure_spd03014_sample_rows(sheet, sample_count: int) -> None:
-    if sample_count <= 5:
+    if sample_count < 5:
+        table_a_delete_start = 23 + sample_count * 24
+        table_a_rows = (5 - sample_count) * 24
+        _delete_rows_preserving_merges(sheet, table_a_delete_start, table_a_rows)
+
+        table_b_start = SPD03014_TABLE_B_START_ROW - table_a_rows
+        table_b_delete_start = table_b_start + sample_count * 4
+        _delete_rows_preserving_merges(sheet, table_b_delete_start, (5 - sample_count) * 4)
+        return
+    if sample_count == 5:
         return
 
     extra_samples = sample_count - 5
@@ -887,7 +933,10 @@ def _spd03014_table_a_start(sample_index: int) -> int:
 
 
 def _spd03014_table_b_start(sample_index: int, sample_count: int) -> int:
-    base = SPD03014_TABLE_B_START_ROW + max(sample_count - 5, 0) * 24
+    if sample_count < 5:
+        base = SPD03014_TABLE_B_START_ROW - (5 - sample_count) * 24
+    else:
+        base = SPD03014_TABLE_B_START_ROW + max(sample_count - 5, 0) * 24
     return base + (sample_index - 1) * 4
 
 
@@ -992,7 +1041,16 @@ def _build_spd03012_data(source_folder: Path, samples: list[Spd03015Sample]) -> 
 
 
 def _ensure_spd03012_sample_rows(sheet, sample_count: int) -> None:
-    if sample_count <= 5:
+    if sample_count < 5:
+        table_a_delete_start = 38 + sample_count * 12
+        table_a_rows = (5 - sample_count) * 12
+        _delete_rows_preserving_merges(sheet, table_a_delete_start, table_a_rows)
+
+        table_b_start = SPD03012_TABLE_B_START_ROW - table_a_rows
+        table_b_delete_start = table_b_start + sample_count * 2
+        _delete_rows_preserving_merges(sheet, table_b_delete_start, (5 - sample_count) * 2)
+        return
+    if sample_count == 5:
         return
 
     extra_samples = sample_count - 5
@@ -1028,7 +1086,10 @@ def _spd03012_table_a_start(sample_index: int) -> int:
 
 
 def _spd03012_table_b_start(sample_index: int, sample_count: int) -> int:
-    base = SPD03012_TABLE_B_START_ROW + max(sample_count - 5, 0) * 12
+    if sample_count < 5:
+        base = SPD03012_TABLE_B_START_ROW - (5 - sample_count) * 12
+    else:
+        base = SPD03012_TABLE_B_START_ROW + max(sample_count - 5, 0) * 12
     return base + (sample_index - 1) * 2
 
 
