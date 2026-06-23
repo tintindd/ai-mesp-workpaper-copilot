@@ -189,9 +189,9 @@ if analyze_clicked:
             type="secondary",
         )
         st.download_button(
-            "下载 SPD03015_IRM(SAP)",
+            "下载 SPD03014+SPD03015_IRM(SAP)",
             data=spd03015_bytes,
-            file_name="AI-MESP_SPD03015_IRM(SAP).xlsx",
+            file_name="AI-MESP_SPD03014_SPD03015_IRM(SAP).xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="secondary",
         )

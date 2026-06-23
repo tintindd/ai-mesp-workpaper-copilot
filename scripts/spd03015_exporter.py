@@ -24,6 +24,14 @@ BORDER = "B7C9D6"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "spd03015_irm_sap_template.xlsx"
 CKM3_LABEL_START_ROWS = {1: 10, 2: 56, 3: 117, 4: 167, 5: 213}
 CKM3_TITLE_ROWS = {1: 1, 2: 49, 3: 99, 4: 148, 5: 197}
+SPD03014_EXPENSES = [
+    ("间接人工", "9043000200"),
+    ("能耗", "9043000400"),
+    ("低值易耗", "9043000500"),
+    ("其他", "9043000600"),
+]
+SPD03014_TABLE_A_START_ROWS = {1: 23, 2: 47, 3: 71, 4: 95, 5: 119}
+SPD03014_TABLE_B_START_ROW = 147
 
 
 @dataclass
@@ -48,6 +56,22 @@ def _norm(value: Any) -> str:
 def _material_id_from_name(name: str) -> str:
     match = re.search(r"物料ID[-_\s]*([A-Za-z0-9]+)", name, flags=re.IGNORECASE)
     return match.group(1) if match else ""
+
+
+def _product_id_from_ckm3(path: Path | None) -> str:
+    if not path:
+        return ""
+    try:
+        workbook = load_workbook(path, data_only=True, read_only=True)
+        sheet = workbook[workbook.sheetnames[0]]
+        for row in sheet.iter_rows(values_only=True):
+            text = " ".join(str(value) for value in row if value not in (None, ""))
+            match = re.search(r"\b0{4,}(\d{8})\b", text)
+            if match:
+                return match.group(1)
+    except Exception:
+        return ""
+    return ""
 
 
 def _safe_div(numerator: float, denominator: float) -> float:
@@ -488,8 +512,207 @@ def _populate_template_spd(sheet, samples: list[Spd03015Sample]) -> None:
         sheet.cell(row, 15, f"=N{row}-H{row}")
 
 
-def _build_from_template(samples: list[Spd03015Sample]) -> Workbook:
+def _header_index(headers: tuple[Any, ...]) -> dict[str, int]:
+    return {_norm(header): index for index, header in enumerate(headers) if _norm(header)}
+
+
+def _cell_value(row: tuple[Any, ...], index: dict[str, int], *names: str) -> Any:
+    for name in names:
+        position = index.get(name)
+        if position is not None and position < len(row):
+            return row[position]
+    return None
+
+
+def _find_report_file(source_folder: Path, sample: int, report: str) -> Path | None:
+    for path in sorted(source_folder.rglob("*")):
+        if not path.is_file() or path.name.startswith("~$"):
+            continue
+        if find_sample(path.relative_to(source_folder)) == sample and find_report(path.name) == report:
+            if path.suffix.lower() in {".xlsx", ".xlsm"}:
+                return path
+    return None
+
+
+def _load_first_sheet_rows(path: Path | None) -> list[tuple[Any, ...]]:
+    if not path:
+        return []
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    sheet = workbook[workbook.sheetnames[0]]
+    return list(sheet.iter_rows(values_only=True))
+
+
+def _extract_co03_spd03014(path: Path | None) -> dict[str, Any]:
+    rows = _load_first_sheet_rows(path)
+    if not rows:
+        return {"product_id": "", "cost_center": "", "expenses": {}}
+
+    index = _header_index(rows[0])
+    product_id = ""
+    cost_center = ""
+    expenses: dict[str, dict[str, float]] = {}
+
+    for row in rows[1:]:
+        business = str(_cell_value(row, index, "业务交易") or "")
+        material = _cell_value(row, index, "物料", "来源")
+        if not product_id and "收货" in business and material not in (None, ""):
+            match = re.search(r"(\d{8})", str(material))
+            if match:
+                product_id = match.group(1)
+
+        cost_element = str(_cell_value(row, index, "成本要素") or "")
+        for expense, code in SPD03014_EXPENSES:
+            if cost_element == code:
+                cost_center = str(_cell_value(row, index, "成本中心") or cost_center)
+                expenses[expense] = {
+                    "qty": numeric(_cell_value(row, index, "实际总计数量")),
+                    "plan": numeric(_cell_value(row, index, "总计划成本")),
+                    "actual": numeric(_cell_value(row, index, "总实际成本")),
+                    "variance": numeric(_cell_value(row, index, "计划/实际差异")),
+                }
+
+    return {"product_id": product_id, "cost_center": cost_center, "expenses": expenses}
+
+
+def _extract_ksbt_rates(path: Path | None) -> dict[str, dict[str, float]]:
+    rows = _load_first_sheet_rows(path)
+    if not rows:
+        return {}
+    index = _header_index(rows[0])
+    rates: dict[str, dict[str, float]] = {expense: {"plan": 0.0, "actual": 0.0} for expense, _ in SPD03014_EXPENSES}
+
+    for row in rows[1:]:
+        text = str(_cell_value(row, index, "作业类型短文本") or "")
+        price = abs(numeric(_cell_value(row, index, "Fix+可变价格", "固定+可变价格", "总价格")))
+        row_type = str(_cell_value(row, index, "A") or "").upper()
+        prt = numeric(_cell_value(row, index, "PrT"))
+        for expense, _ in SPD03014_EXPENSES:
+            if expense in text:
+                if row_type == "A" or prt == 5:
+                    rates[expense]["actual"] = price
+                elif not rates[expense]["plan"]:
+                    rates[expense]["plan"] = price
+
+    return rates
+
+
+def _extract_3611_amounts(path: Path | None) -> dict[str, float]:
+    rows = _load_first_sheet_rows(path)
+    if not rows:
+        return {}
+    index = _header_index(rows[0])
+    amounts = {expense: 0.0 for expense, _ in SPD03014_EXPENSES}
+
+    for row in rows[1:]:
+        name = str(_cell_value(row, index, "成本要素名称", "成本要素 (文本)") or "")
+        amount = abs(numeric(_cell_value(row, index, "实际成本", "差异(绝对)")))
+        for expense, _ in SPD03014_EXPENSES:
+            if expense in name or (expense == "其他" and "其他" in name):
+                amounts[expense] = amount
+
+    return amounts
+
+
+def _build_spd03014_data(source_folder: Path, samples: list[Spd03015Sample]) -> list[dict[str, Any]]:
+    results = []
+    for sample in samples:
+        co03 = _extract_co03_spd03014(_find_report_file(source_folder, sample.sample, "CO03"))
+        ksbt = _extract_ksbt_rates(_find_report_file(source_folder, sample.sample, "KSBT"))
+        amounts_3611 = _extract_3611_amounts(_find_report_file(source_folder, sample.sample, "3611"))
+        product_id = co03.get("product_id") or _product_id_from_ckm3(sample.ckm3_path) or sample.material_id or sample.order
+        energy_rate = (ksbt.get("能耗") or {}).get("actual", 0.0)
+        common_overhead_hours = (
+            round(amounts_3611.get("能耗", 0.0) / energy_rate) if energy_rate else 0
+        )
+
+        expense_rows = []
+        for expense, _ in SPD03014_EXPENSES:
+            co03_expense = (co03.get("expenses") or {}).get(expense, {})
+            actual_rate = (ksbt.get(expense) or {}).get("actual", 0.0)
+            plan_rate = (ksbt.get(expense) or {}).get("plan", 0.0)
+            amount_3611 = amounts_3611.get(expense, 0.0)
+            denominator = common_overhead_hours or (round(amount_3611 / actual_rate) if actual_rate else 0)
+            actual_absorption_rate = amount_3611 / denominator if denominator else 0.0
+
+            expense_rows.append(
+                {
+                    "expense": expense,
+                    "qty": co03_expense.get("qty", 0.0),
+                    "plan": co03_expense.get("plan", 0.0),
+                    "actual": co03_expense.get("actual", 0.0),
+                    "variance": co03_expense.get("variance", 0.0),
+                    "actual_rate": actual_rate,
+                    "plan_rate": plan_rate,
+                    "actual_absorption_rate": actual_absorption_rate,
+                }
+            )
+
+        results.append(
+            {
+                "sample": sample.sample,
+                "order": sample.order,
+                "product_id": product_id,
+                "cost_center": co03.get("cost_center", ""),
+                "expenses": expense_rows,
+            }
+        )
+
+    return results
+
+
+def _populate_template_spd03014(sheet, source_folder: Path, samples: list[Spd03015Sample]) -> None:
+    data = _build_spd03014_data(source_folder, samples[:5])
+    for sample_index, sample_data in enumerate(data, 1):
+        block_start = SPD03014_TABLE_A_START_ROWS.get(sample_index)
+        if not block_start:
+            continue
+
+        for expense_index, expense_data in enumerate(sample_data["expenses"]):
+            row = block_start + expense_index * 6
+            sheet.cell(row, 2, f"样本{sample_data['sample']}")
+            sheet.cell(row, 3, sample_data["product_id"])
+            sheet.cell(row, 4, sample_data["cost_center"])
+            sheet.cell(row, 5, sample_data["order"])
+            sheet.cell(row, 6, expense_data["expense"])
+            sheet.cell(row, 7, expense_data["qty"])
+            sheet.cell(row, 8, expense_data["plan"])
+            sheet.cell(row, 9, expense_data["actual"])
+            sheet.cell(row, 10, expense_data["variance"])
+            sheet.cell(row, 11, expense_data["actual_rate"])
+            sheet.cell(row, 12, f"=IF(N{row}=0,0*G{row}-H{row},I{row}/N{row}*G{row}-H{row})")
+            sheet.cell(row, 13, f"=L{row}-J{row}")
+            sheet.cell(row, 14, f"=G{row}")
+            sheet.cell(row, 15, "不适用")
+            sheet.cell(row, 16, expense_data["actual_absorption_rate"])
+            sheet.cell(row, 17, f"=P{row}-K{row}")
+            sheet.cell(row, 20, f"=N{row}")
+
+        table_b_start = SPD03014_TABLE_B_START_ROW + (sample_index - 1) * 4
+        for expense_index, expense_data in enumerate(sample_data["expenses"]):
+            table_a_row = block_start + expense_index * 6
+            row = table_b_start + expense_index
+            qty = expense_data["qty"]
+            standard_unit_cost = expense_data["plan"] / qty if qty else expense_data["plan_rate"]
+            standard_total = standard_unit_cost * qty if qty else expense_data["plan"]
+
+            sheet.cell(row, 2, f"样本{sample_data['sample']}")
+            sheet.cell(row, 3, sample_data["product_id"])
+            sheet.cell(row, 4, sample_data["cost_center"])
+            sheet.cell(row, 5, sample_data["order"])
+            sheet.cell(row, 6, expense_data["expense"])
+            sheet.cell(row, 7, standard_unit_cost)
+            sheet.cell(row, 8, qty)
+            sheet.cell(row, 9, standard_total)
+            sheet.cell(row, 10, expense_data["actual"])
+            sheet.cell(row, 11, f"=J{row}-I{row}")
+            sheet.cell(row, 12, f"=J{table_a_row}")
+            sheet.cell(row, 13, f"=L{row}-K{row}")
+
+
+def _build_from_template(samples: list[Spd03015Sample], source_folder: Path) -> Workbook:
     workbook = load_workbook(TEMPLATE_PATH, data_only=False)
+    if "SPD03014_IRM(SAP)" in workbook.sheetnames:
+        _populate_template_spd03014(workbook["SPD03014_IRM(SAP)"], source_folder, samples)
     _populate_template_spd(workbook["SPD03015_IRM(SAP)"], samples)
     if "CKM3" in workbook.sheetnames:
         del workbook["CKM3"]
@@ -501,7 +724,7 @@ def _build_from_template(samples: list[Spd03015Sample]) -> Workbook:
 def build_spd03015_workbook(source_folder: Path) -> Workbook:
     samples = _discover_samples(source_folder)
     if TEMPLATE_PATH.exists():
-        return _build_from_template(samples)
+        return _build_from_template(samples, source_folder)
 
     workbook = Workbook()
     ck_rows = _build_ckm3_sheet(workbook, samples)
