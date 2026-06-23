@@ -16,6 +16,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
 from mesp_automation_engine import analyze_folder  # noqa: E402
+from supporting_exporter import build_supporting_bytes  # noqa: E402
 from workpaper_exporter import build_workpaper_bytes  # noqa: E402
 
 
@@ -153,6 +154,7 @@ if analyze_clicked:
 
         with st.spinner("正在识别 SAP 支持文件并生成复核结果..."):
             result = analyze_folder(temp_dir, period=period, program=program)
+            supporting_bytes = build_supporting_bytes(result, temp_dir)
 
     summary = result.get("summary", {})
     cols = st.columns(5)
@@ -177,6 +179,13 @@ if analyze_clicked:
 
     with tab_json:
         workbook_bytes = build_workpaper_bytes(result)
+        st.download_button(
+            "下载 SPP Supporting Excel",
+            data=supporting_bytes,
+            file_name="AI-MESP_SPP_Supporting.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="secondary",
+        )
         st.download_button(
             "下载 Excel 底稿",
             data=workbook_bytes,

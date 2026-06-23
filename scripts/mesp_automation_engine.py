@@ -329,6 +329,8 @@ def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
     for path in sorted(folder.rglob("*")):
         if not path.is_file():
             continue
+        if path.name.startswith("~$"):
+            continue
         parsed = parse_file(path, folder)
         if parsed:
             parsed_files.append(parsed)
