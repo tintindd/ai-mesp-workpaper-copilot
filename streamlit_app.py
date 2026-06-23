@@ -156,7 +156,10 @@ if analyze_clicked:
         with st.spinner("正在识别 SAP 支持文件并生成复核结果..."):
             result = analyze_folder(temp_dir, period=period, program=program)
             supporting_bytes = build_supporting_bytes(result, temp_dir)
-            spd03015_bytes = build_spd03015_bytes(temp_dir)
+            spp_dir = temp_dir / "_generated_spp"
+            spp_dir.mkdir(parents=True, exist_ok=True)
+            (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
+            spd03015_bytes = build_spd03015_bytes(spp_dir)
 
     summary = result.get("summary", {})
     cols = st.columns(5)

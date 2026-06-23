@@ -183,6 +183,49 @@ def _load_spp_report_rows(source_folder: Path, sample: int, report: str) -> list
     return []
 
 
+def _spp_has_screenshot(source_folder: Path, sample: int, report: str) -> bool:
+    report_columns = {
+        "CO03": "CO03-截图",
+        "KSBT": "KSBT-截图",
+        "3611": "3611-截图",
+        "CKM3": "CKM3-截图",
+    }
+    target_header = report_columns.get(report)
+    if not target_header:
+        return False
+
+    for workbook_path in _iter_candidate_workbooks(source_folder):
+        try:
+            workbook = load_workbook(workbook_path, data_only=True, read_only=True)
+        except Exception:
+            continue
+        if "SPP目录" not in workbook.sheetnames:
+            workbook.close()
+            continue
+
+        sheet = workbook["SPP目录"]
+        rows = list(sheet.iter_rows(values_only=True))
+        workbook.close()
+        if len(rows) < 4:
+            continue
+
+        headers = [_norm(value) for value in rows[2]]
+        try:
+            sample_col = headers.index("样本")
+            report_col = headers.index(target_header)
+        except ValueError:
+            continue
+
+        for row in rows[3:]:
+            sample_text = _norm(row[sample_col] if sample_col < len(row) else "")
+            if find_sample(Path(sample_text)) != sample:
+                continue
+            value = _norm(row[report_col] if report_col < len(row) else "")
+            if value and value not in {"0", "0张", "0 张", "-"}:
+                return True
+    return False
+
+
 def _load_report_rows(source_folder: Path, sample: int, report: str) -> list[tuple[Any, ...]]:
     report_path = _find_report_file(source_folder, sample, report)
     if report_path:
@@ -625,6 +668,10 @@ def _document_type_for_report(source_folder: Path, sample: int, report: str, pre
         return "清单类电子数据【Electronic data】"
     if any(ext in image_exts for ext in matched_exts):
         return "截屏类电子文件【Electronic document】"
+    if prefer_image and _spp_has_screenshot(source_folder, sample, report):
+        return "截屏类电子文件【Electronic document】"
+    if _load_spp_report_rows(source_folder, sample, report):
+        return "清单类电子数据【Electronic data】"
     return ""
 
 
@@ -633,7 +680,9 @@ def _load_first_sheet_rows(path: Path | None) -> list[tuple[Any, ...]]:
         return []
     workbook = load_workbook(path, data_only=True, read_only=True)
     sheet = workbook[workbook.sheetnames[0]]
-    return list(sheet.iter_rows(values_only=True))
+    rows = list(sheet.iter_rows(values_only=True))
+    workbook.close()
+    return rows
 
 
 def _coerce_rows(source: Path | list[tuple[Any, ...]] | None) -> list[tuple[Any, ...]]:
@@ -978,7 +1027,38 @@ def _spd03012_table_b_start(sample_index: int, sample_count: int) -> int:
     return base + (sample_index - 1) * 2
 
 
+def _repair_spd03012_header(sheet) -> None:
+    blue_fill = PatternFill("solid", fgColor="00338D")
+    white_font = Font(name="Arial", bold=True, color=WHITE, size=10)
+    subtitle_font = Font(name="Arial", bold=True, italic=True, color=WHITE, size=8)
+
+    for row in (1, 2, 3):
+        for col in range(1, 20):
+            cell = sheet.cell(row, col)
+            cell.fill = blue_fill
+            cell.border = Border()
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+    for merged_range in list(sheet.merged_cells.ranges):
+        if merged_range.min_row <= 3 and merged_range.max_row >= 1:
+            sheet.unmerge_cells(str(merged_range))
+
+    for range_ref in ("B1:S1", "B2:S2", "B3:S3"):
+        sheet.merge_cells(range_ref)
+
+    sheet["B2"] = "kpmg    存货的固定加工成本 (标准成本法)  - 重新计算"
+    sheet["B3"] = "（本实质性程序模板用于测试标准成本法下的存货固定加工成本。）"
+    sheet["B2"].font = white_font
+    sheet["B3"].font = subtitle_font
+    sheet["B2"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    sheet["B3"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    sheet.row_dimensions[1].height = 8
+    sheet.row_dimensions[2].height = 24
+    sheet.row_dimensions[3].height = 20
+
+
 def _populate_template_spd03012(sheet, source_folder: Path, samples: list[Spd03015Sample]) -> None:
+    _repair_spd03012_header(sheet)
     _ensure_spd03012_sample_rows(sheet, len(samples))
     data = _build_spd03012_data(source_folder, samples)
     for sample_index, sample_data in enumerate(data, 1):
