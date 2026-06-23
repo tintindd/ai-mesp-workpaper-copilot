@@ -20,6 +20,9 @@ LIGHT_YELLOW = "FFF2CC"
 LIGHT_GRAY = "F2F2F2"
 WHITE = "FFFFFF"
 BORDER = "B7C9D6"
+TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "spd03015_irm_sap_template.xlsx"
+CKM3_LABEL_START_ROWS = {1: 10, 2: 56, 3: 117, 4: 167, 5: 213}
+CKM3_TITLE_ROWS = {1: 1, 2: 49, 3: 99, 4: 148, 5: 197}
 
 
 @dataclass
@@ -373,8 +376,77 @@ def _build_ckm3_sheet(workbook: Workbook, samples: list[Spd03015Sample]) -> dict
     return ck_rows
 
 
+def _ckm3_label_start(index: int) -> int:
+    return CKM3_LABEL_START_ROWS.get(index, 10 + (index - 1) * 49)
+
+
+def _ckm3_title_row(index: int) -> int:
+    return CKM3_TITLE_ROWS.get(index, 1 + (index - 1) * 49)
+
+
+def _populate_template_ckm3(sheet, samples: list[Spd03015Sample]) -> dict[int, dict[str, int]]:
+    ck_rows: dict[int, dict[str, int]] = {}
+    labels = [
+        ("beginning_qty", "期数库存交易数量", "beginning_qty"),
+        ("beginning_variance", "期初价格差异", "beginning_variance"),
+        ("receipt_qty", "收货库存交易数量", "receipt_qty"),
+        ("receipt_variance", "收货价格差异", "receipt_variance"),
+        ("outbound_qty", "消耗库存交易数量", "outbound_qty"),
+        ("outbound_variance", "消耗价格差异", "outbound_variance"),
+    ]
+
+    for index, sample in enumerate(samples, 1):
+        title_row = _ckm3_title_row(index)
+        label_start = _ckm3_label_start(index)
+        sheet.cell(title_row, 1, f"{sample.sample}.订单编号：{sample.order or ''}")
+        ck_rows[sample.sample] = {}
+
+        for offset, (key, label, attr) in enumerate(labels):
+            row = label_start + offset
+            sheet.cell(row, 25, label)
+            sheet.cell(row, 26, getattr(sample, attr))
+            sheet.cell(row, 26).number_format = "#,##0.00"
+            ck_rows[sample.sample][key] = row
+
+    return ck_rows
+
+
+def _populate_template_spd(sheet, samples: list[Spd03015Sample], ck_rows: dict[int, dict[str, int]]) -> None:
+    for row in range(19, 24):
+        for col in [2, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15]:
+            sheet.cell(row, col).value = None
+
+    for row_offset, sample in enumerate(samples[:5]):
+        row = 19 + row_offset
+        ck = ck_rows[sample.sample]
+        sheet.cell(row, 1, sample.sample)
+        sheet.cell(row, 2, sample.material_id or "")
+        sheet.cell(row, 3, sample.period or "")
+        sheet.cell(row, 4, f"='CKM3'!Z{ck['beginning_qty']}")
+        sheet.cell(row, 5, f"='CKM3'!Z{ck['beginning_variance']}")
+        sheet.cell(row, 6, f"='CKM3'!Z{ck['receipt_qty']}")
+        sheet.cell(row, 7, f"='CKM3'!Z{ck['receipt_variance']}")
+        sheet.cell(row, 8, f"='CKM3'!Z{ck['outbound_variance']}")
+        sheet.cell(row, 12, f"=(E{row}+G{row})/(D{row}+F{row})")
+        sheet.cell(row, 13, f"='CKM3'!Z{ck['outbound_qty']}")
+        sheet.cell(row, 14, f"=M{row}*L{row}")
+        sheet.cell(row, 15, f"=N{row}-H{row}")
+
+
+def _build_from_template(samples: list[Spd03015Sample]) -> Workbook:
+    workbook = load_workbook(TEMPLATE_PATH, data_only=False)
+    ck_rows = _populate_template_ckm3(workbook["CKM3"], samples)
+    _populate_template_spd(workbook["SPD03015_IRM(SAP)"], samples, ck_rows)
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
+    return workbook
+
+
 def build_spd03015_workbook(source_folder: Path) -> Workbook:
     samples = _discover_samples(source_folder)
+    if TEMPLATE_PATH.exists():
+        return _build_from_template(samples)
+
     workbook = Workbook()
     ck_rows = _build_ckm3_sheet(workbook, samples)
     _build_spd_sheet(workbook, samples, ck_rows)
