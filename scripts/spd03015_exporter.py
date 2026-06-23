@@ -541,6 +541,25 @@ def _find_report_file(source_folder: Path, sample: int, report: str) -> Path | N
     return None
 
 
+def _document_type_for_report(source_folder: Path, sample: int, report: str, prefer_image: bool) -> str:
+    image_exts = {".png", ".jpg", ".jpeg", ".pdf"}
+    table_exts = {".xlsx", ".xlsm", ".csv"}
+    matched_exts = []
+    for path in sorted(source_folder.rglob("*")):
+        if not path.is_file() or path.name.startswith("~$"):
+            continue
+        if find_sample(path.relative_to(source_folder)) == sample and find_report(path.name) == report:
+            matched_exts.append(path.suffix.lower())
+
+    if prefer_image and any(ext in image_exts for ext in matched_exts):
+        return "截屏类电子文件【Electronic document】"
+    if any(ext in table_exts for ext in matched_exts):
+        return "清单类电子数据【Electronic data】"
+    if any(ext in image_exts for ext in matched_exts):
+        return "截屏类电子文件【Electronic document】"
+    return ""
+
+
 def _load_first_sheet_rows(path: Path | None) -> list[tuple[Any, ...]]:
     if not path:
         return []
@@ -743,6 +762,9 @@ def _populate_template_spd03014(sheet, source_folder: Path, samples: list[Spd030
     data = _build_spd03014_data(source_folder, samples)
     for sample_index, sample_data in enumerate(data, 1):
         block_start = _spd03014_table_a_start(sample_index)
+        sample_no = sample_data["sample"]
+        screenshot_type = _document_type_for_report(source_folder, sample_no, "CO03", prefer_image=True)
+        co03_table_type = _document_type_for_report(source_folder, sample_no, "CO03", prefer_image=False)
 
         for expense_index, expense_data in enumerate(sample_data["expenses"]):
             row = block_start + expense_index * 6
@@ -763,6 +785,8 @@ def _populate_template_spd03014(sheet, source_folder: Path, samples: list[Spd030
             sheet.cell(row, 16, expense_data["actual_absorption_rate"])
             sheet.cell(row, 17, f"=P{row}-K{row}")
             sheet.cell(row, 20, f"=N{row}")
+            for doc_offset in range(6):
+                sheet.cell(row + doc_offset, 19, co03_table_type if doc_offset == 4 else screenshot_type)
 
         table_b_start = _spd03014_table_b_start(sample_index, len(data))
         for expense_index, expense_data in enumerate(sample_data["expenses"]):
