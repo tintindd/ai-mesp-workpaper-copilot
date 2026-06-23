@@ -459,7 +459,7 @@ def _ensure_template_sample_rows(sheet, sample_count: int) -> None:
             sheet.cell(row, col, value)
 
 
-def _populate_template_spd(sheet, samples: list[Spd03015Sample], ck_rows: dict[int, dict[str, int]]) -> None:
+def _populate_template_spd(sheet, samples: list[Spd03015Sample]) -> None:
     blue_fill = PatternFill("solid", fgColor="FF00338D")
     for row in [2, 3]:
         for col in range(1, 38):
@@ -474,25 +474,25 @@ def _populate_template_spd(sheet, samples: list[Spd03015Sample], ck_rows: dict[i
 
     for row_offset, sample in enumerate(samples):
         row = 19 + row_offset
-        ck = ck_rows[sample.sample]
         sheet.cell(row, 1, sample.sample)
         sheet.cell(row, 2, sample.material_id or "")
         sheet.cell(row, 3, sample.period or "")
-        sheet.cell(row, 4, f"='CKM3'!Z{ck['beginning_qty']}")
-        sheet.cell(row, 5, f"='CKM3'!Z{ck['beginning_variance']}")
-        sheet.cell(row, 6, f"='CKM3'!Z{ck['receipt_qty']}")
-        sheet.cell(row, 7, f"='CKM3'!Z{ck['receipt_variance']}")
-        sheet.cell(row, 8, f"='CKM3'!Z{ck['outbound_variance']}")
+        sheet.cell(row, 4, sample.beginning_qty)
+        sheet.cell(row, 5, sample.beginning_variance)
+        sheet.cell(row, 6, sample.receipt_qty)
+        sheet.cell(row, 7, sample.receipt_variance)
+        sheet.cell(row, 8, sample.outbound_variance)
         sheet.cell(row, 12, f"=(E{row}+G{row})/(D{row}+F{row})")
-        sheet.cell(row, 13, f"='CKM3'!Z{ck['outbound_qty']}")
+        sheet.cell(row, 13, sample.outbound_qty)
         sheet.cell(row, 14, f"=M{row}*L{row}")
         sheet.cell(row, 15, f"=N{row}-H{row}")
 
 
 def _build_from_template(samples: list[Spd03015Sample]) -> Workbook:
     workbook = load_workbook(TEMPLATE_PATH, data_only=False)
-    ck_rows = _populate_template_ckm3(workbook["CKM3"], samples)
-    _populate_template_spd(workbook["SPD03015_IRM(SAP)"], samples, ck_rows)
+    _populate_template_spd(workbook["SPD03015_IRM(SAP)"], samples)
+    if "CKM3" in workbook.sheetnames:
+        del workbook["CKM3"]
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
     return workbook
@@ -506,6 +506,8 @@ def build_spd03015_workbook(source_folder: Path) -> Workbook:
     workbook = Workbook()
     ck_rows = _build_ckm3_sheet(workbook, samples)
     _build_spd_sheet(workbook, samples, ck_rows)
+    if "CKM3" in workbook.sheetnames:
+        del workbook["CKM3"]
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
     return workbook
