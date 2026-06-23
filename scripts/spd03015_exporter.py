@@ -48,6 +48,7 @@ class Spd03015Sample:
     material_id: str
     period: str
     ckm3_path: Path | None
+    ckm3_rows: list[tuple[Any, ...]] | None
     beginning_qty: float
     beginning_variance: float
     receipt_qty: float
@@ -65,30 +66,24 @@ def _material_id_from_name(name: str) -> str:
     return match.group(1) if match else ""
 
 
-def _product_id_from_ckm3(path: Path | None) -> str:
-    if not path:
-        return ""
-    try:
-        workbook = load_workbook(path, data_only=True, read_only=True)
-        sheet = workbook[workbook.sheetnames[0]]
-        for row in sheet.iter_rows(values_only=True):
-            text = " ".join(str(value) for value in row if value not in (None, ""))
-            match = re.search(r"\b0{4,}(\d{8})\b", text)
-            if match:
-                return match.group(1)
-    except Exception:
-        return ""
+def _product_id_from_ckm3_rows(rows: list[tuple[Any, ...]] | None) -> str:
+    for row in rows or []:
+        text = " ".join(str(value) for value in row if value not in (None, ""))
+        match = re.search(r"\b0{4,}(\d{8})\b", text)
+        if match:
+            return match.group(1)
     return ""
+
+
+def _product_id_from_ckm3(path: Path | None) -> str:
+    return _product_id_from_ckm3_rows(_load_first_sheet_rows(path))
 
 
 def _safe_div(numerator: float, denominator: float) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-def _extract_ckm3_amounts(path: Path) -> dict[str, float]:
-    workbook = load_workbook(path, data_only=True, read_only=True)
-    sheet = workbook[workbook.sheetnames[0]]
-    rows = list(sheet.iter_rows(values_only=True))
+def _extract_ckm3_amounts_from_rows(rows: list[tuple[Any, ...]] | None) -> dict[str, float]:
     if not rows:
         return {}
 
@@ -151,6 +146,50 @@ def _extract_ckm3_amounts(path: Path) -> dict[str, float]:
     }
 
 
+def _extract_ckm3_amounts(path: Path | None) -> dict[str, float]:
+    return _extract_ckm3_amounts_from_rows(_load_first_sheet_rows(path))
+
+
+def _parse_report_sheet_name(sheet_name: str) -> tuple[int | None, str | None, str]:
+    sample = find_sample(Path(sheet_name))
+    report = find_report(sheet_name)
+    order_match = re.search(r"订单编号\s*([A-Za-z0-9]+)", sheet_name, flags=re.IGNORECASE)
+    order = order_match.group(1) if order_match else (find_order(Path(sheet_name)) or "")
+    return sample, report, order
+
+
+def _iter_candidate_workbooks(source_folder: Path) -> list[Path]:
+    return [
+        path
+        for path in sorted(source_folder.rglob("*"))
+        if path.is_file() and not path.name.startswith("~$") and path.suffix.lower() in {".xlsx", ".xlsm"}
+    ]
+
+
+def _load_spp_report_rows(source_folder: Path, sample: int, report: str) -> list[tuple[Any, ...]]:
+    for workbook_path in _iter_candidate_workbooks(source_folder):
+        try:
+            workbook = load_workbook(workbook_path, data_only=True, read_only=True)
+        except Exception:
+            continue
+
+        for sheet_name in workbook.sheetnames:
+            sheet_sample, sheet_report, _ = _parse_report_sheet_name(sheet_name)
+            if sheet_sample == sample and sheet_report == report:
+                rows = list(workbook[sheet_name].iter_rows(values_only=True))
+                workbook.close()
+                return rows
+        workbook.close()
+    return []
+
+
+def _load_report_rows(source_folder: Path, sample: int, report: str) -> list[tuple[Any, ...]]:
+    report_path = _find_report_file(source_folder, sample, report)
+    if report_path:
+        return _load_first_sheet_rows(report_path)
+    return _load_spp_report_rows(source_folder, sample, report)
+
+
 def _discover_samples(source_folder: Path) -> list[Spd03015Sample]:
     by_sample: dict[int, dict[str, Any]] = {}
 
@@ -172,10 +211,31 @@ def _discover_samples(source_folder: Path) -> list[Spd03015Sample]:
         if find_report(path.name) == "CKM3" and path.suffix.lower() in {".xlsx", ".xlsm", ".csv"}:
             info["ckm3_path"] = path
 
+    for workbook_path in _iter_candidate_workbooks(source_folder):
+        try:
+            workbook = load_workbook(workbook_path, data_only=True, read_only=True)
+        except Exception:
+            continue
+        for sheet_name in workbook.sheetnames:
+            sample, report, order = _parse_report_sheet_name(sheet_name)
+            if not sample or report not in {"CO03", "KSBT", "3611", "CKM3"}:
+                continue
+            info = by_sample.setdefault(sample, {"sample": sample, "order": "", "material_id": "", "ckm3_path": None})
+            if order and not info["order"]:
+                info["order"] = order
+            if report == "CKM3" and not info.get("ckm3_rows"):
+                info["ckm3_rows"] = list(workbook[sheet_name].iter_rows(values_only=True))
+        workbook.close()
+
     samples: list[Spd03015Sample] = []
     for sample_no in sorted(by_sample):
         info = by_sample[sample_no]
-        amounts = _extract_ckm3_amounts(info["ckm3_path"]) if info.get("ckm3_path") else {}
+        ckm3_rows = info.get("ckm3_rows") or _load_spp_report_rows(source_folder, sample_no, "CKM3")
+        amounts = (
+            _extract_ckm3_amounts(info["ckm3_path"])
+            if info.get("ckm3_path")
+            else _extract_ckm3_amounts_from_rows(ckm3_rows)
+        )
         samples.append(
             Spd03015Sample(
                 sample=sample_no,
@@ -183,6 +243,7 @@ def _discover_samples(source_folder: Path) -> list[Spd03015Sample]:
                 material_id=info.get("material_id", ""),
                 period="",
                 ckm3_path=info.get("ckm3_path"),
+                ckm3_rows=ckm3_rows,
                 beginning_qty=amounts.get("beginning_qty", 0.0),
                 beginning_variance=amounts.get("beginning_variance", 0.0),
                 receipt_qty=amounts.get("receipt_qty", 0.0),
@@ -575,8 +636,14 @@ def _load_first_sheet_rows(path: Path | None) -> list[tuple[Any, ...]]:
     return list(sheet.iter_rows(values_only=True))
 
 
-def _extract_co03_spd03014(path: Path | None) -> dict[str, Any]:
-    rows = _load_first_sheet_rows(path)
+def _coerce_rows(source: Path | list[tuple[Any, ...]] | None) -> list[tuple[Any, ...]]:
+    if isinstance(source, list):
+        return source
+    return _load_first_sheet_rows(source)
+
+
+def _extract_co03_spd03014(source: Path | list[tuple[Any, ...]] | None) -> dict[str, Any]:
+    rows = _coerce_rows(source)
     if not rows:
         return {"product_id": "", "cost_center": "", "expenses": {}}
 
@@ -607,8 +674,8 @@ def _extract_co03_spd03014(path: Path | None) -> dict[str, Any]:
     return {"product_id": product_id, "cost_center": cost_center, "expenses": expenses}
 
 
-def _extract_ksbt_rates(path: Path | None) -> dict[str, dict[str, float]]:
-    rows = _load_first_sheet_rows(path)
+def _extract_ksbt_rates(source: Path | list[tuple[Any, ...]] | None) -> dict[str, dict[str, float]]:
+    rows = _coerce_rows(source)
     if not rows:
         return {}
     index = _header_index(rows[0])
@@ -629,8 +696,8 @@ def _extract_ksbt_rates(path: Path | None) -> dict[str, dict[str, float]]:
     return rates
 
 
-def _extract_3611_amounts(path: Path | None) -> dict[str, float]:
-    rows = _load_first_sheet_rows(path)
+def _extract_3611_amounts(source: Path | list[tuple[Any, ...]] | None) -> dict[str, float]:
+    rows = _coerce_rows(source)
     if not rows:
         return {}
     index = _header_index(rows[0])
@@ -649,10 +716,16 @@ def _extract_3611_amounts(path: Path | None) -> dict[str, float]:
 def _build_spd03014_data(source_folder: Path, samples: list[Spd03015Sample]) -> list[dict[str, Any]]:
     results = []
     for sample in samples:
-        co03 = _extract_co03_spd03014(_find_report_file(source_folder, sample.sample, "CO03"))
-        ksbt = _extract_ksbt_rates(_find_report_file(source_folder, sample.sample, "KSBT"))
-        amounts_3611 = _extract_3611_amounts(_find_report_file(source_folder, sample.sample, "3611"))
-        product_id = co03.get("product_id") or _product_id_from_ckm3(sample.ckm3_path) or sample.material_id or sample.order
+        co03 = _extract_co03_spd03014(_load_report_rows(source_folder, sample.sample, "CO03"))
+        ksbt = _extract_ksbt_rates(_load_report_rows(source_folder, sample.sample, "KSBT"))
+        amounts_3611 = _extract_3611_amounts(_load_report_rows(source_folder, sample.sample, "3611"))
+        product_id = (
+            co03.get("product_id")
+            or _product_id_from_ckm3_rows(sample.ckm3_rows)
+            or _product_id_from_ckm3(sample.ckm3_path)
+            or sample.material_id
+            or sample.order
+        )
         energy_rate = (ksbt.get("能耗") or {}).get("actual", 0.0)
         common_overhead_hours = (
             round(amounts_3611.get("能耗", 0.0) / energy_rate) if energy_rate else 0
@@ -820,10 +893,16 @@ def _populate_template_spd03014(sheet, source_folder: Path, samples: list[Spd030
 def _build_spd03012_data(source_folder: Path, samples: list[Spd03015Sample]) -> list[dict[str, Any]]:
     results = []
     for sample in samples:
-        co03 = _extract_co03_spd03014(_find_report_file(source_folder, sample.sample, "CO03"))
-        ksbt = _extract_ksbt_rates(_find_report_file(source_folder, sample.sample, "KSBT"))
-        amounts_3611 = _extract_3611_amounts(_find_report_file(source_folder, sample.sample, "3611"))
-        product_id = co03.get("product_id") or _product_id_from_ckm3(sample.ckm3_path) or sample.material_id or sample.order
+        co03 = _extract_co03_spd03014(_load_report_rows(source_folder, sample.sample, "CO03"))
+        ksbt = _extract_ksbt_rates(_load_report_rows(source_folder, sample.sample, "KSBT"))
+        amounts_3611 = _extract_3611_amounts(_load_report_rows(source_folder, sample.sample, "3611"))
+        product_id = (
+            co03.get("product_id")
+            or _product_id_from_ckm3_rows(sample.ckm3_rows)
+            or _product_id_from_ckm3(sample.ckm3_path)
+            or sample.material_id
+            or sample.order
+        )
 
         expense_rows = []
         for expense, _ in SPD03012_EXPENSES:
