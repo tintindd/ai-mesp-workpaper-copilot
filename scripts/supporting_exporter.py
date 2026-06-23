@@ -12,6 +12,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.hyperlink import Hyperlink
 
 from mesp_automation_engine import REPORTS, find_order, find_report, find_sample
 
@@ -100,9 +101,14 @@ def _auto_width(sheet, max_width: int = 42) -> None:
         sheet.column_dimensions[get_column_letter(col)].width = width
 
 
-def _hyperlink(cell, target_sheet: str, display: str) -> None:
+def _hyperlink(cell, target_sheet: str, display: str, target_cell: str = "A1") -> None:
     cell.value = display
-    cell.hyperlink = f"#'{target_sheet}'!A1"
+    quoted_sheet = target_sheet.replace("'", "''")
+    cell.hyperlink = Hyperlink(
+        ref=cell.coordinate,
+        location=f"'{quoted_sheet}'!{target_cell}",
+        display=display,
+    )
     cell.style = "Hyperlink"
 
 
@@ -235,6 +241,7 @@ def _build_directory_sheet(
     orders: dict[int, str],
     table_links: dict[tuple[int, str], str],
     image_counts: dict[tuple[int, str], int],
+    image_links: dict[tuple[int, str], str],
 ) -> None:
     sheet.title = "SPP目录"
     sheet.sheet_view.showGridLines = False
@@ -258,7 +265,7 @@ def _build_directory_sheet(
         for report in REPORTS:
             count = image_counts.get((sample, report), 0)
             if count:
-                _hyperlink(sheet.cell(row_index, col), "INF-截图", f"{count} 张")
+                _hyperlink(sheet.cell(row_index, col), "INF-截图", f"{count} 张", image_links.get((sample, report), "A1"))
             else:
                 sheet.cell(row_index, col, "缺失")
             table_sheet = table_links.get((sample, report))
@@ -281,7 +288,12 @@ def _fit_image(image: ExcelImage, max_width: int = 260, max_height: int = 165) -
     image.height = int(height * scale)
 
 
-def _build_image_sheet(sheet, samples: list[int], orders: dict[int, str], image_items: list[dict[str, Any]]) -> None:
+def _build_image_sheet(
+    sheet,
+    samples: list[int],
+    orders: dict[int, str],
+    image_items: list[dict[str, Any]],
+) -> dict[tuple[int, str], str]:
     sheet.title = "INF-截图"
     sheet.sheet_view.showGridLines = False
     sheet.freeze_panes = "A3"
@@ -302,6 +314,7 @@ def _build_image_sheet(sheet, samples: list[int], orders: dict[int, str], image_
         images_by_sample_report[(item["sample"], item["report"])].append(item)
 
     row = 4
+    image_links: dict[tuple[int, str], str] = {}
     for sample in samples:
         sheet.row_dimensions[row].height = 24
         sheet.cell(row, 1, f"样本{sample}\n订单编号：{orders.get(sample, '未识别')}")
@@ -312,6 +325,7 @@ def _build_image_sheet(sheet, samples: list[int], orders: dict[int, str], image_
             if not items:
                 sheet.cell(row, col_index, "缺失")
                 continue
+            image_links[(sample, report)] = f"{get_column_letter(col_index)}{row}"
             cursor_row = row
             for item in items[:2]:
                 path = item["path"]
@@ -336,6 +350,8 @@ def _build_image_sheet(sheet, samples: list[int], orders: dict[int, str], image_
 
     if samples:
         _style_body(sheet, 4, row - 1, 5)
+
+    return image_links
 
 
 def build_supporting_workbook(result: dict, source_folder: Path) -> Workbook:
@@ -369,8 +385,8 @@ def build_supporting_workbook(result: dict, source_folder: Path) -> Workbook:
     for item in image_items:
         image_counts[(item["sample"], item["report"])] += 1
 
-    _build_directory_sheet(directory, samples, orders, table_links, image_counts)
-    _build_image_sheet(image_sheet, samples, orders, image_items)
+    image_links = _build_image_sheet(image_sheet, samples, orders, image_items)
+    _build_directory_sheet(directory, samples, orders, table_links, image_counts, image_links)
 
     workbook.properties.title = "SPP Supporting Package"
     workbook.properties.subject = result.get("program") or ""
