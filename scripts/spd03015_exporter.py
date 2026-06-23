@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from copy import copy
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter, range_boundaries
 
 from mesp_automation_engine import find_order, find_report, find_sample, numeric
 
@@ -411,17 +412,67 @@ def _populate_template_ckm3(sheet, samples: list[Spd03015Sample]) -> dict[int, d
     return ck_rows
 
 
+def _copy_row_style(sheet, source_row: int, target_row: int, max_col: int = 37, copy_static_values: bool = False) -> None:
+    sheet.row_dimensions[target_row].height = sheet.row_dimensions[source_row].height
+    for col in range(1, max_col + 1):
+        source = sheet.cell(source_row, col)
+        target = sheet.cell(target_row, col)
+        if source.has_style:
+            target.font = copy(source.font)
+            target.fill = copy(source.fill)
+            target.border = copy(source.border)
+            target.alignment = copy(source.alignment)
+            target.number_format = source.number_format
+            target.protection = copy(source.protection)
+        if copy_static_values and col in {9, 10, 16, 17, 18}:
+            target.value = source.value
+
+
+def _ensure_template_sample_rows(sheet, sample_count: int) -> None:
+    if sample_count <= 5:
+        return
+
+    extra_rows = sample_count - 5
+    insert_at = 24
+    template_row = 23
+    static_values = {col: sheet.cell(template_row, col).value for col in [9, 10, 16, 17, 18]}
+    merged_ranges_to_shift = [
+        str(cell_range) for cell_range in sheet.merged_cells.ranges if cell_range.min_row >= insert_at
+    ]
+
+    for cell_range in merged_ranges_to_shift:
+        sheet.unmerge_cells(cell_range)
+
+    sheet.insert_rows(insert_at, extra_rows)
+
+    for cell_range in merged_ranges_to_shift:
+        min_col, min_row, max_col, max_row = range_boundaries(cell_range)
+        shifted_range = (
+            f"{get_column_letter(min_col)}{min_row + extra_rows}:"
+            f"{get_column_letter(max_col)}{max_row + extra_rows}"
+        )
+        sheet.merge_cells(shifted_range)
+
+    for row in range(insert_at, insert_at + extra_rows):
+        _copy_row_style(sheet, template_row, row, copy_static_values=False)
+        for col, value in static_values.items():
+            sheet.cell(row, col, value)
+
+
 def _populate_template_spd(sheet, samples: list[Spd03015Sample], ck_rows: dict[int, dict[str, int]]) -> None:
     blue_fill = PatternFill("solid", fgColor="FF00338D")
     for row in [2, 3]:
         for col in range(1, 38):
             sheet.cell(row, col).fill = blue_fill
 
-    for row in range(19, 24):
+    _ensure_template_sample_rows(sheet, len(samples))
+
+    last_sample_row = 18 + max(len(samples), 5)
+    for row in range(19, last_sample_row + 1):
         for col in [2, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15]:
             sheet.cell(row, col).value = None
 
-    for row_offset, sample in enumerate(samples[:5]):
+    for row_offset, sample in enumerate(samples):
         row = 19 + row_offset
         ck = ck_rows[sample.sample]
         sheet.cell(row, 1, sample.sample)
