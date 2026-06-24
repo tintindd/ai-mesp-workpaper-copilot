@@ -35,7 +35,7 @@ st.session_state["ui_theme"] = query_theme
 theme_is_dark = query_theme == "dark"
 theme_class = "theme-dark" if theme_is_dark else "theme-light"
 next_theme = "light" if theme_is_dark else "dark"
-theme_label = "日间" if theme_is_dark else "夜间"
+theme_label = "主题切换"
 
 st.markdown(
     """
