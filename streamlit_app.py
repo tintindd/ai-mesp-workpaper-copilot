@@ -130,12 +130,24 @@ with st.sidebar:
         ["SPD03012", "SPD03014", "SPD03015"],
         index=0,
     )
-    st.info("建议上传 zip 文件以保留样本文件夹结构，例如 样本1、样本2。")
+    st.info("建议上传 zip 包以保留样本文件夹结构；单样本也可以直接上传该样本的全部支持文件。")
 
 uploaded_files = st.file_uploader(
     "上传支持文件或 zip 包",
     type=["xlsx", "xlsm", "csv", "png", "jpg", "jpeg", "pdf", "zip"],
     accept_multiple_files=True,
+)
+
+st.info(
+    "命名要求：zip 包内建议按 `样本1/`、`样本2/` 建文件夹；每个样本至少包含 CO03、KSBT、3611、CKM3 表格文件，可同时包含对应截图。"
+    "\n\n"
+    "文件名需包含样本号、订单编号和报表类型，例如："
+    "\n"
+    "`样本3/3.订单编号11001846-CO03-表格.xlsx`、"
+    "`样本3/3.订单编号11001846-CO03-截图.png`、"
+    "`样本3/3.订单编号11001846-KSBT-表格.xlsx`、"
+    "`样本3/3.订单编号11001846-3611-表格.xlsx`、"
+    "`样本3/3.订单编号11001846-物料ID-13012857-CKM3-表格.xlsx`。"
 )
 
 if uploaded_files:
@@ -157,7 +169,7 @@ if analyze_clicked:
             spp_dir = temp_dir / "_generated_spp"
             spp_dir.mkdir(parents=True, exist_ok=True)
             (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
-            selected_spd_bytes = build_spd03015_bytes(spp_dir, program=program)
+            selected_spd_bytes = build_spd03015_bytes(spp_dir, program=program, period=period)
 
     st.session_state["analysis_bundle"] = {
         "result": result,
@@ -211,4 +223,4 @@ if bundle:
             type="primary",
         )
 else:
-    st.info("请上传 CO03、KSBT、3611、CKM3 支持文件。若包含多个样本，推荐上传 zip 包。")
+    st.info("请上传符合命名要求的 CO03、KSBT、3611、CKM3 支持文件或 zip 包。")

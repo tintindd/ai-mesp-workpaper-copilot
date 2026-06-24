@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from copy import copy
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -1149,6 +1150,7 @@ def _remove_spd03014_red_notes(sheet) -> None:
 
 
 def _standardize_visible_sheet(sheet) -> None:
+    sheet.freeze_panes = None
     for dimension in sheet.row_dimensions.values():
         dimension.hidden = False
         dimension.outlineLevel = 0
@@ -1159,6 +1161,58 @@ def _standardize_visible_sheet(sheet) -> None:
         dimension.collapsed = False
     sheet.sheet_properties.outlinePr.summaryBelow = False
     sheet.sheet_properties.outlinePr.summaryRight = False
+
+
+def _parse_audit_period(period: str | None) -> tuple[datetime, datetime] | None:
+    parts = re.findall(r"\d+", period or "")
+    if len(parts) < 6:
+        return None
+    try:
+        start = datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+        end = datetime(int(parts[3]), int(parts[4]), int(parts[5]))
+    except ValueError:
+        return None
+    return start, end
+
+
+def _set_date_cell(sheet, cell_ref: str, value: datetime) -> None:
+    cell = sheet[cell_ref]
+    cell.value = value
+    cell.number_format = "dd/mm/yyyy"
+
+
+def _apply_audit_period(workbook: Workbook, period: str | None) -> None:
+    parsed = _parse_audit_period(period)
+    if not parsed:
+        return
+    start, end = parsed
+
+    if "SPD03012-IRM(SAP)" in workbook.sheetnames:
+        sheet = workbook["SPD03012-IRM(SAP)"]
+        sheet["B15"] = "期间截止日"
+        if sheet["B14"].has_style:
+            sheet["B15"].font = copy(sheet["B14"].font)
+            sheet["B15"].fill = copy(sheet["B14"].fill)
+            sheet["B15"].border = copy(sheet["B14"].border)
+            sheet["B15"].alignment = copy(sheet["B14"].alignment)
+        if sheet["E14"].has_style:
+            sheet["E15"].font = copy(sheet["E14"].font)
+            sheet["E15"].fill = copy(sheet["E14"].fill)
+            sheet["E15"].border = copy(sheet["E14"].border)
+            sheet["E15"].alignment = copy(sheet["E14"].alignment)
+            sheet["E15"].protection = copy(sheet["E14"].protection)
+        _set_date_cell(sheet, "E14", start)
+        _set_date_cell(sheet, "E15", end)
+
+    if "SPD03014_IRM(SAP)" in workbook.sheetnames:
+        sheet = workbook["SPD03014_IRM(SAP)"]
+        _set_date_cell(sheet, "F14", start)
+        _set_date_cell(sheet, "F15", end)
+
+    if "SPD03015_IRM(SAP)" in workbook.sheetnames:
+        sheet = workbook["SPD03015_IRM(SAP)"]
+        _set_date_cell(sheet, "C9", start)
+        _set_date_cell(sheet, "C10", end)
 
 
 def _populate_template_spd03012(sheet, source_folder: Path, samples: list[Spd03015Sample]) -> None:
@@ -1231,6 +1285,7 @@ def _build_from_template(
     samples: list[Spd03015Sample],
     source_folder: Path,
     programs: str | list[str] | tuple[str, ...] | set[str] | None = None,
+    period: str | None = None,
 ) -> Workbook:
     selected = _normalize_programs(programs)
     workbook = load_workbook(TEMPLATE_PATH, data_only=False)
@@ -1249,6 +1304,7 @@ def _build_from_template(
         del workbook["CKM3"]
     if "SPD03014_IRM(SAP)" in workbook.sheetnames:
         _remove_spd03014_red_notes(workbook["SPD03014_IRM(SAP)"])
+    _apply_audit_period(workbook, period)
     for sheet in workbook.worksheets:
         _standardize_visible_sheet(sheet)
     workbook.calculation.fullCalcOnLoad = True
@@ -1259,10 +1315,11 @@ def _build_from_template(
 def build_spd03015_workbook(
     source_folder: Path,
     program: str | list[str] | tuple[str, ...] | set[str] | None = None,
+    period: str | None = None,
 ) -> Workbook:
     samples = _discover_samples(source_folder)
     if TEMPLATE_PATH.exists():
-        return _build_from_template(samples, source_folder, program)
+        return _build_from_template(samples, source_folder, program, period)
 
     workbook = Workbook()
     ck_rows = _build_ckm3_sheet(workbook, samples)
@@ -1277,8 +1334,9 @@ def build_spd03015_workbook(
 def build_spd03015_bytes(
     source_folder: Path,
     program: str | list[str] | tuple[str, ...] | set[str] | None = None,
+    period: str | None = None,
 ) -> bytes:
-    workbook = build_spd03015_workbook(source_folder, program)
+    workbook = build_spd03015_workbook(source_folder, program, period)
     stream = BytesIO()
     workbook.save(stream)
     return stream.getvalue()
