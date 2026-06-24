@@ -185,6 +185,29 @@ st.markdown(
         font-weight: 800;
         min-height: 2.7rem;
     }
+    .stButton > button[kind="primary"],
+    .stDownloadButton > button[kind="primary"] {
+        background: #e7f1ff !important;
+        border-color: #9fc5f8 !important;
+        color: #00338d !important;
+    }
+    .stButton > button[kind="primary"]:hover,
+    .stDownloadButton > button[kind="primary"]:hover {
+        background: #d8eaff !important;
+        border-color: #6ea8ee !important;
+        color: #002f6c !important;
+    }
+    .stButton > button[kind="primary"]:focus,
+    .stDownloadButton > button[kind="primary"]:focus {
+        box-shadow: 0 0 0 .18rem rgba(0, 94, 184, .18) !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] label span:first-child {
+        border-color: #7fb3f0 !important;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] label span:first-child:has(input:checked) {
+        background-color: #005eb8 !important;
+        border-color: #005eb8 !important;
+    }
     .fork-button {
         position: fixed;
         top: .45rem;
