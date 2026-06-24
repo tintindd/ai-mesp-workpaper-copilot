@@ -366,6 +366,12 @@ if theme_is_dark:
         [data-testid="stFileUploader"] small {
             color: #b6c4d8 !important;
         }
+        [data-testid="stFileUploader"] small,
+        [data-testid="stFileUploaderDropzone"] small,
+        [data-testid="stFileUploaderDropzone"] span {
+            color: #dbeafe !important;
+            opacity: 1 !important;
+        }
         .program-code,
         div[data-testid="stMetricValue"] {
             color: #60a5fa !important;
