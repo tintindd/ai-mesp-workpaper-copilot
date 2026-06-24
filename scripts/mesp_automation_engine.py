@@ -345,6 +345,17 @@ def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
     workbook_results = []
     evidence_trace = []
 
+    if not parsed_files and ignored_files:
+        issues.append(
+            build_issue(
+                "未识别有效支持文件",
+                "全部",
+                "未从本次上传中识别到有效的 MESP 支持文件。",
+                "请确认文件名包含样本号、订单编号以及 CO03、KSBT、3611 或 CKM3 报表类型；如包含多个样本，建议按样本文件夹打包上传 zip。",
+                "error",
+            )
+        )
+
     for sample in sorted(by_sample):
         sample_files = by_sample[sample]
         order = next((item["order"] for item in sample_files if item["order"]), "")
@@ -404,7 +415,7 @@ def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
                         )
                     )
 
-    if period:
+    if period and parsed_files:
         issues.append(
             build_issue(
                 "期间一致性检查",
@@ -432,6 +443,9 @@ def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
     workbook_count_by_report = {
         report: sum(1 for item in workbook_results if item["report"] == report) for report in REPORTS
     }
+    missing_file_count = sum(1 for issue in issues if issue["type"] in {"支持文件缺失", "报表类型缺失"})
+    issue_count = len(issues)
+    trace_count = len(evidence_trace)
 
     return {
         "input_folder": str(folder),
@@ -441,8 +455,11 @@ def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
             "sample_count": len(by_sample),
             "recognized_file_count": len(parsed_files),
             "ignored_file_count": len(ignored_files),
-            "missing_file_count": sum(1 for issue in issues if issue["type"] in {"支持文件缺失", "报表类型缺失"}),
-            "warning_count": sum(1 for issue in issues if issue["type"] not in {"支持文件缺失", "报表类型缺失"}),
+            "missing_file_count": missing_file_count,
+            "issue_count": issue_count,
+            "warning_count": sum(1 for issue in issues if issue["status"] != "error"),
+            "error_count": sum(1 for issue in issues if issue["status"] == "error"),
+            "trace_count": trace_count,
             "workbook_count": len(workbook_results),
             "workbook_count_by_report": workbook_count_by_report,
             "co03_workbook_count": workbook_count_by_report.get("CO03", 0),

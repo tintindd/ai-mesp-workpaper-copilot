@@ -169,7 +169,12 @@ if analyze_clicked:
             spp_dir = temp_dir / "_generated_spp"
             spp_dir.mkdir(parents=True, exist_ok=True)
             (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
-            selected_spd_bytes = build_spd03015_bytes(spp_dir, program=program, period=period)
+            summary = result.get("summary", {})
+            selected_spd_bytes = (
+                build_spd03015_bytes(spp_dir, program=program, period=period)
+                if summary.get("sample_count", 0) > 0 and summary.get("recognized_file_count", 0) > 0
+                else b""
+            )
 
     st.session_state["analysis_bundle"] = {
         "result": result,
@@ -190,9 +195,9 @@ if bundle:
     cols = st.columns(5)
     cols[0].metric("样本数", summary.get("sample_count", 0))
     cols[1].metric("识别文件", summary.get("recognized_file_count", 0))
-    cols[2].metric("缺失项", summary.get("missing_file_count", 0))
+    cols[2].metric("异常项", summary.get("issue_count", len(result.get("issues") or [])))
     cols[3].metric("表格数", summary.get("workbook_count", 0))
-    cols[4].metric("追溯项", len(result.get("evidence_trace") or []))
+    cols[4].metric("已追溯项", summary.get("trace_count", len(result.get("evidence_trace") or [])))
 
     tab_issues, tab_workbooks, tab_trace, tab_download = st.tabs(
         ["异常与追问", "SAP 表格映射", "Evidence Traceability", "底稿结果下载"]
@@ -208,19 +213,22 @@ if bundle:
         render_trace(result.get("evidence_trace") or [])
 
     with tab_download:
-        st.download_button(
-            "下载 SPP Supporting Excel",
-            data=supporting_bytes,
-            file_name="AI-MESP_SPP_Supporting.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="secondary",
-        )
-        st.download_button(
-            f"下载 {selected_program}_IRM(SAP)",
-            data=selected_spd_bytes,
-            file_name=f"AI-MESP_{selected_program}_IRM(SAP).xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-        )
+        if summary.get("sample_count", 0) == 0 or summary.get("recognized_file_count", 0) == 0:
+            st.warning("未识别到有效样本，暂不生成底稿结果。请先根据异常提示修正上传文件命名或内容。")
+        else:
+            st.download_button(
+                "下载 SPP Supporting Excel",
+                data=supporting_bytes,
+                file_name="AI-MESP_SPP_Supporting.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="secondary",
+            )
+            st.download_button(
+                f"下载 {selected_program}_IRM(SAP)",
+                data=selected_spd_bytes,
+                file_name=f"AI-MESP_{selected_program}_IRM(SAP).xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+            )
 else:
     st.info("请上传符合命名要求的 CO03、KSBT、3611、CKM3 支持文件或 zip 包。")
