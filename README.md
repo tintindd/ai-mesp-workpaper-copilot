@@ -141,11 +141,12 @@ OCR 识别建议使用在线 PaddleOCR 服务，避免在 Streamlit Cloud 中安
 在 Streamlit Community Cloud 的 `App settings -> Secrets` 中继续添加：
 
 ```toml
-PADDLEOCR_API_URL = "你的在线 PaddleOCR 服务调用地址"
-PADDLEOCR_API_KEY = "你的在线 PaddleOCR Token 或 API Key"
+PADDLEOCR_API_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
+PADDLEOCR_API_KEY = "你的在线 PaddleOCR Token"
 PADDLEOCR_AUTH_HEADER = "Authorization"
-PADDLEOCR_AUTH_SCHEME = "Bearer"
+PADDLEOCR_AUTH_SCHEME = "bearer"
 PADDLEOCR_FILE_FIELD = "file"
+PADDLEOCR_MODEL = "PaddleOCR-VL-1.6"
 ```
 
 如果平台要求的鉴权头不是 `Authorization: Bearer xxx`，可以按平台文档调整：
