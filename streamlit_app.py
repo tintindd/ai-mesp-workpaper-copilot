@@ -523,8 +523,6 @@ def render_trace(items: list[dict]) -> None:
     )
 
 
-st.markdown(f'<div class="{theme_class}">', unsafe_allow_html=True)
-
 st.markdown(
     f"""
     <a class="theme-button" href="?theme={next_theme}" target="_self" rel="noopener">{theme_label}</a>
@@ -728,4 +726,4 @@ with work_col:
     else:
         st.info("请上传符合命名要求的 CO03、KSBT、3611、CKM3 支持文件或 zip 包。")
 
-st.markdown("</div></div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
