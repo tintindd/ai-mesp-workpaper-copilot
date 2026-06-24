@@ -208,3 +208,60 @@ def test_deepseek_connection(config: DeepSeekConfig) -> str:
         temperature=0,
         max_tokens=20,
     )
+
+
+def clean_ocr_text_with_deepseek(filename: str, ocr_text: str, config: DeepSeekConfig) -> dict[str, Any]:
+    content = deepseek_chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You clean PaddleOCR text extracted from SAP audit evidence screenshots. "
+                    "Return strict JSON only, no markdown. Identify sample_no, order_id, material_id, "
+                    "report_type, evidence_kind, key_fields, standard_filename, confidence, and notes. "
+                    "report_type must be one of CO03, KSBT, 3611, CKM3, unknown. "
+                    "evidence_kind should usually be 截图. Use null for unknown values. "
+                    "Use the AI-MESP filename convention when possible."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"filename: {filename}\n\n"
+                    "PaddleOCR text:\n"
+                    f"{ocr_text[:8000]}"
+                ),
+            },
+        ],
+        config,
+        temperature=0,
+        max_tokens=1200,
+    )
+    data = parse_deepseek_json(content)
+    extension = data.get("extension") or (filename.rsplit(".", 1)[-1].lower() if "." in filename else None)
+    evidence_kind = data.get("evidence_kind") or "截图"
+    sample_no = data.get("sample_no")
+    order_id = data.get("order_id")
+    material_id = data.get("material_id")
+    report_type = data.get("report_type")
+    standard_filename = _build_standard_filename(
+        sample_no=sample_no,
+        order_id=order_id,
+        material_id=material_id,
+        report_type=report_type,
+        evidence_kind=evidence_kind,
+        extension=extension,
+    )
+    return {
+        "source_file": filename,
+        "sample_no": sample_no,
+        "order_id": order_id,
+        "material_id": material_id,
+        "report_type": report_type,
+        "evidence_kind": evidence_kind,
+        "standard_filename": standard_filename or data.get("standard_filename"),
+        "confidence": data.get("confidence"),
+        "key_fields": data.get("key_fields") or {},
+        "notes": data.get("notes"),
+        "raw_response": data,
+    }

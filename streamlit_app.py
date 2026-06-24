@@ -16,10 +16,12 @@ if str(SCRIPTS_ROOT) not in sys.path:
 
 from mesp_automation_engine import analyze_folder  # noqa: E402
 from deepseek_client import (  # noqa: E402
+    clean_ocr_text_with_deepseek,
     load_deepseek_config,
     normalize_filename_with_deepseek,
     test_deepseek_connection,
 )
+from ocr_client import is_image_file, paddleocr_available, recognize_uploaded_image  # noqa: E402
 from spd03015_exporter import build_spd03015_bytes  # noqa: E402
 from supporting_exporter import build_supporting_bytes  # noqa: E402
 
@@ -639,6 +641,43 @@ def run_filename_cleanup(uploaded_files) -> None:
         st.session_state["filename_cleanup_error"] = str(exc)
 
 
+def run_ocr_cleanup(uploaded_files) -> None:
+    st.session_state["ocr_cleanup_results"] = []
+    st.session_state.pop("ocr_cleanup_error", None)
+    if not paddleocr_available():
+        st.session_state["ocr_cleanup_error"] = "当前环境未安装 PaddleOCR，无法运行图片 OCR。"
+        return
+    if not deepseek_config:
+        st.session_state["ocr_cleanup_error"] = "DeepSeek API Key 未配置，无法清洗 OCR 文本。"
+        return
+
+    image_files = [item for item in uploaded_files or [] if is_image_file(item.name)]
+    if not image_files:
+        st.session_state["ocr_cleanup_error"] = "未找到可 OCR 的图片文件。"
+        return
+
+    results = []
+    try:
+        for uploaded_file in image_files:
+            ocr_result = recognize_uploaded_image(uploaded_file)
+            cleaned = clean_ocr_text_with_deepseek(
+                uploaded_file.name,
+                ocr_result.get("text") or "",
+                deepseek_config,
+            )
+            results.append(
+                {
+                    "source_file": uploaded_file.name,
+                    "ocr_text": ocr_result.get("text") or "",
+                    "ocr_line_count": ocr_result.get("line_count", 0),
+                    "cleaned": cleaned,
+                }
+            )
+        st.session_state["ocr_cleanup_results"] = results
+    except Exception as exc:
+        st.session_state["ocr_cleanup_error"] = str(exc)
+
+
 deepseek_config = load_deepseek_config(st.secrets)
 
 
@@ -824,6 +863,10 @@ with work_col:
                 else:
                     st.warning("DeepSeek API Key 未配置，清洗功能暂不可用。")
                     st.caption("在 Streamlit Cloud 的 Secrets 中添加 DEEPSEEK_API_KEY 后即可启用。")
+                if paddleocr_available():
+                    st.success("PaddleOCR 已可用")
+                else:
+                    st.warning("PaddleOCR 未安装，OCR 功能暂不可用。")
                 st.button(
                     "测试 DeepSeek 连接",
                     disabled=not deepseek_config,
@@ -882,7 +925,42 @@ with work_col:
                     )
 
             if enable_ocr_cleanup:
-                st.info("OCR 识别入口已预留。下一步接入 PaddleOCR 后，会先从截图抽取文字/表格，再交给 DeepSeek 做字段清洗。")
+                image_count = len([item for item in uploaded_files or [] if is_image_file(item.name)])
+                st.button(
+                    "运行 OCR 识别与清洗",
+                    disabled=not uploaded_files or not deepseek_config or not paddleocr_available(),
+                    on_click=run_ocr_cleanup,
+                    args=(uploaded_files,),
+                )
+                if uploaded_files:
+                    st.caption(f"可 OCR 图片数：{image_count}")
+
+                ocr_error = st.session_state.get("ocr_cleanup_error")
+                ocr_results = st.session_state.get("ocr_cleanup_results") or []
+                if ocr_error:
+                    st.error(ocr_error)
+                if ocr_results:
+                    st.dataframe(
+                        [
+                            {
+                                "原始文件": item.get("source_file"),
+                                "OCR行数": item.get("ocr_line_count"),
+                                "样本号": (item.get("cleaned") or {}).get("sample_no") or "-",
+                                "订单编号": (item.get("cleaned") or {}).get("order_id") or "-",
+                                "物料ID": (item.get("cleaned") or {}).get("material_id") or "-",
+                                "报表类型": (item.get("cleaned") or {}).get("report_type") or "-",
+                                "建议标准文件名": (item.get("cleaned") or {}).get("standard_filename") or "-",
+                                "来源": "PaddleOCR + DeepSeek",
+                            }
+                            for item in ocr_results
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    with st.expander("查看 OCR 原文"):
+                        for item in ocr_results:
+                            st.markdown(f"**{item.get('source_file')}**")
+                            st.text(item.get("ocr_text") or "")
 
             analyze_clicked = st.button("Analyze", type="primary", disabled=not uploaded_files)
 
