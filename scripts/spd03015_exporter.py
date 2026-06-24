@@ -1123,6 +1123,44 @@ def _repair_spd03012_header(sheet) -> None:
     sheet.row_dimensions[3].height = 20
 
 
+def _clear_range(sheet, range_ref: str) -> None:
+    min_col, min_row, max_col, max_row = range_boundaries(range_ref)
+    for merged_range in list(sheet.merged_cells.ranges):
+        if (
+            merged_range.min_col >= min_col
+            and merged_range.max_col <= max_col
+            and merged_range.min_row >= min_row
+            and merged_range.max_row <= max_row
+        ):
+            sheet.unmerge_cells(str(merged_range))
+
+    for row in range(min_row, max_row + 1):
+        for col in range(min_col, max_col + 1):
+            cell = sheet.cell(row, col)
+            cell.value = None
+            cell.comment = None
+            cell.fill = PatternFill(fill_type=None)
+            cell.border = Border()
+
+
+def _remove_spd03014_red_notes(sheet) -> None:
+    _clear_range(sheet, "K9:O13")
+    _clear_range(sheet, "R22:Y22")
+
+
+def _standardize_visible_sheet(sheet) -> None:
+    for dimension in sheet.row_dimensions.values():
+        dimension.hidden = False
+        dimension.outlineLevel = 0
+        dimension.collapsed = False
+    for dimension in sheet.column_dimensions.values():
+        dimension.hidden = False
+        dimension.outlineLevel = 0
+        dimension.collapsed = False
+    sheet.sheet_properties.outlinePr.summaryBelow = False
+    sheet.sheet_properties.outlinePr.summaryRight = False
+
+
 def _populate_template_spd03012(sheet, source_folder: Path, samples: list[Spd03015Sample]) -> None:
     _repair_spd03012_header(sheet)
     _ensure_spd03012_sample_rows(sheet, len(samples))
@@ -1209,6 +1247,10 @@ def _build_from_template(
             del workbook[sheet_name]
     if "CKM3" in workbook.sheetnames:
         del workbook["CKM3"]
+    if "SPD03014_IRM(SAP)" in workbook.sheetnames:
+        _remove_spd03014_red_notes(workbook["SPD03014_IRM(SAP)"])
+    for sheet in workbook.worksheets:
+        _standardize_visible_sheet(sheet)
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
     return workbook
