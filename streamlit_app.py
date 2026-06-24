@@ -324,6 +324,106 @@ if theme_is_dark:
         [data-testid="stHeader"] {
             background: transparent !important;
         }
+        .block-container {
+            background: #05070b !important;
+        }
+        .mesp-hero {
+            background: linear-gradient(120deg, #020617 0%, #09204d 56%, #005eb8 100%) !important;
+            border-bottom: 1px solid rgba(255,255,255,.08) !important;
+        }
+        .mesp-shell {
+            color: #f8fafc !important;
+        }
+        .step-card,
+        div[data-testid="stVerticalBlockBorderWrapper"],
+        .program-card,
+        div[data-testid="stMetric"] {
+            background: #0f172a !important;
+            border-color: #243047 !important;
+            box-shadow: 0 1rem 2rem rgba(0,0,0,.34) !important;
+        }
+        .step-item.active {
+            background: #102647 !important;
+            color: #dbeafe !important;
+        }
+        .step-no {
+            border-color: #5b7aaa !important;
+            color: #93c5fd !important;
+            background: rgba(96,165,250,.08) !important;
+        }
+        .step-item strong,
+        .main-title h2,
+        .program-card strong,
+        h1, h2, h3, h4, h5, h6,
+        label,
+        [data-testid="stMarkdownContainer"] {
+            color: #f8fafc !important;
+        }
+        .step-item span,
+        .main-title p,
+        div[data-testid="stMetric"] label,
+        [data-testid="stWidgetLabel"] p,
+        [data-testid="stFileUploader"] small {
+            color: #b6c4d8 !important;
+        }
+        .program-code,
+        div[data-testid="stMetricValue"] {
+            color: #60a5fa !important;
+        }
+        .pill {
+            background: #172033 !important;
+            border-color: #334155 !important;
+            color: #dbeafe !important;
+        }
+        .upload-rules {
+            background: #0b1f37 !important;
+            border-color: #1d4f82 !important;
+            color: #d8ecff !important;
+        }
+        .upload-rules strong {
+            color: #ffffff !important;
+        }
+        .upload-rules code {
+            background: #07111f !important;
+            border-color: #2d4567 !important;
+            color: #93c5fd !important;
+        }
+        input,
+        textarea,
+        select,
+        [data-baseweb="select"] > div,
+        [data-testid="stFileUploaderDropzone"] {
+            background: #111827 !important;
+            color: #f8fafc !important;
+            border-color: #334155 !important;
+        }
+        [data-baseweb="select"] span,
+        [data-baseweb="select"] div,
+        [data-testid="stTextInput"] input {
+            color: #f8fafc !important;
+        }
+        [data-testid="stFileUploaderDropzone"] button,
+        .stButton > button,
+        .stDownloadButton > button {
+            background: #172033 !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+        }
+        .stButton > button[kind="primary"],
+        .stDownloadButton > button[kind="primary"] {
+            background: #005eb8 !important;
+            border-color: #2b8edb !important;
+            color: #ffffff !important;
+        }
+        [data-testid="stRadio"] label,
+        [data-testid="stRadio"] p {
+            color: #dbeafe !important;
+        }
+        [data-testid="stDataFrame"],
+        [data-testid="stTable"] {
+            background: #0f172a !important;
+            color: #f8fafc !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
