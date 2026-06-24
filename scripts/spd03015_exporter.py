@@ -772,8 +772,11 @@ def _extract_ksbt_rates(source: Path | list[tuple[Any, ...]] | None) -> dict[str
         return {}
     index = _header_index(rows[0])
     rates: dict[str, dict[str, float]] = {expense: {"plan": 0.0, "actual": 0.0} for expense, _ in IRM_EXPENSES}
+    cost_center = ""
 
     for row in rows[1:]:
+        if not cost_center and row and row[0] not in (None, ""):
+            cost_center = str(row[0]).strip()
         text = str(_cell_value(row, index, "作业类型短文本") or "")
         price = abs(numeric(_cell_value(row, index, "Fix+可变价格", "固定+可变价格", "总价格")))
         row_type = str(_cell_value(row, index, "A") or "").upper()
@@ -785,6 +788,7 @@ def _extract_ksbt_rates(source: Path | list[tuple[Any, ...]] | None) -> dict[str
                 elif not rates[expense]["plan"]:
                     rates[expense]["plan"] = price
 
+    rates["__meta__"] = {"cost_center": cost_center}
     return rates
 
 
@@ -850,7 +854,7 @@ def _build_spd03014_data(source_folder: Path, samples: list[Spd03015Sample]) -> 
                 "sample": sample.sample,
                 "order": sample.order,
                 "product_id": product_id,
-                "cost_center": "",
+                "cost_center": co03.get("cost_center") or (ksbt.get("__meta__") or {}).get("cost_center", ""),
                 "expenses": expense_rows,
             }
         )

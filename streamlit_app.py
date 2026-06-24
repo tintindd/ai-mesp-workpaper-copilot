@@ -4,8 +4,11 @@ import shutil
 import sys
 import tempfile
 import zipfile
+from io import BytesIO
 from pathlib import Path
 
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 import streamlit as st
 
 
@@ -14,7 +17,7 @@ SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
 if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
-from mesp_automation_engine import analyze_folder  # noqa: E402
+from mesp_automation_engine import REQUIRED_FIELDS, analyze_folder, analyze_workbook  # noqa: E402
 from deepseek_client import (  # noqa: E402
     clean_ocr_text_with_deepseek,
     load_deepseek_config,
@@ -27,6 +30,7 @@ from ocr_client import (  # noqa: E402
     online_ocr_available,
     recognize_uploaded_image,
 )
+from ckm3_table_builder import build_ckm3_workbook_bytes, extract_ckm3_rows  # noqa: E402
 from spd03015_exporter import build_spd03015_bytes  # noqa: E402
 from supporting_exporter import build_supporting_bytes  # noqa: E402
 
@@ -567,6 +571,8 @@ def render_trace(items: list[dict]) -> None:
 def mark_scenario_started() -> None:
     st.session_state["scenario_started"] = True
     st.session_state["params_confirmed"] = False
+    st.session_state["ckm3_ocr_confirmed"] = False
+    st.session_state["filename_cleanup_confirmed"] = False
     st.session_state["has_uploaded_files"] = False
     st.session_state.pop("analysis_bundle", None)
 
@@ -587,10 +593,24 @@ def go_next_from_params() -> None:
     st.session_state["current_step"] = 3
 
 
+def go_next_from_ckm3_ocr() -> None:
+    st.session_state["ckm3_ocr_confirmed"] = True
+    st.session_state["current_step"] = 4
+
+
+def go_next_from_filename_cleanup() -> None:
+    st.session_state["filename_cleanup_confirmed"] = True
+    st.session_state["current_step"] = 5
+
+
 def get_unlocked_step() -> int:
     if st.session_state.get("analysis_bundle"):
+        return 6
+    if st.session_state.get("filename_cleanup_confirmed") or st.session_state.get("has_uploaded_files"):
+        return 5
+    if st.session_state.get("ckm3_ocr_confirmed"):
         return 4
-    if st.session_state.get("params_confirmed") or st.session_state.get("has_uploaded_files"):
+    if st.session_state.get("params_confirmed"):
         return 3
     if st.session_state.get("scenario_started"):
         return 2
@@ -630,6 +650,11 @@ def run_deepseek_connection_test() -> None:
         }
 
 
+def display_missing_fields(report: str, missing_fields: list[str]) -> list[str]:
+    aliases = REQUIRED_FIELDS.get(report, {})
+    return [(aliases.get(field) or [field])[0] for field in missing_fields]
+
+
 def run_filename_cleanup(uploaded_files) -> None:
     if not deepseek_config:
         st.session_state["filename_cleanup_results"] = []
@@ -644,6 +669,180 @@ def run_filename_cleanup(uploaded_files) -> None:
         st.session_state.pop("filename_cleanup_error", None)
     except Exception as exc:
         st.session_state["filename_cleanup_error"] = str(exc)
+
+
+def _cleanup_evidence_kind(filename: str) -> str:
+    extension = Path(filename).suffix.lower().lstrip(".")
+    if extension in {"xlsx", "xlsm", "xls", "csv"}:
+        return "表格"
+    if extension in {"png", "jpg", "jpeg", "pdf"}:
+        return "截图"
+    return "未知"
+
+
+def _standard_cleanup_filename(
+    *,
+    sample_no: str,
+    order_id: str,
+    material_id: str,
+    report: str,
+    evidence_kind: str,
+    extension: str,
+) -> str:
+    sample_text = str(sample_no or "1").strip()
+    order_text = str(order_id or "待补充").strip()
+    extension_text = extension.lstrip(".").lower()
+    if report == "CKM3":
+        material_text = str(material_id or "待补充").strip()
+        return (
+            f"样本{sample_text}/{sample_text}.订单编号{order_text}-"
+            f"物料ID-{material_text}-CKM3-{evidence_kind}.{extension_text}"
+        )
+    return f"样本{sample_text}/{sample_text}.订单编号{order_text}-{report}-{evidence_kind}.{extension_text}"
+
+
+def _deduplicate_zip_name(name: str, used_names: set[str]) -> str:
+    if name not in used_names:
+        used_names.add(name)
+        return name
+    path = Path(name)
+    folder = path.parent.as_posix()
+    stem = path.stem
+    suffix = path.suffix
+    counter = 2
+    while True:
+        candidate_name = f"{stem}-{counter}{suffix}"
+        candidate = f"{folder}/{candidate_name}" if folder != "." else candidate_name
+        if candidate not in used_names:
+            used_names.add(candidate)
+            return candidate
+        counter += 1
+
+
+def build_standard_named_zip_bytes(cleanup_results: list[dict]) -> bytes:
+    output = BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for item in cleanup_results:
+            file_bytes = item.get("file_bytes")
+            standard_filename = item.get("standard_filename")
+            if not file_bytes or not standard_filename:
+                continue
+            zip_name = _deduplicate_zip_name(str(standard_filename), used_names)
+            archive.writestr(zip_name, file_bytes)
+    return output.getvalue()
+
+
+def run_filename_cleanup_by_bucket(
+    sample_no: str,
+    order_id: str,
+    material_id: str,
+    bucket_files: dict[str, list],
+) -> None:
+    st.session_state["filename_cleanup_results"] = []
+    st.session_state.pop("standard_named_zip_bytes", None)
+    st.session_state.pop("filename_cleanup_error", None)
+
+    results = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="mesp_filename_check_") as temp:
+            temp_dir = Path(temp)
+            for report, files in bucket_files.items():
+                for uploaded_file in files or []:
+                    file_bytes = uploaded_file.getvalue()
+                    if deepseek_config:
+                        cleaned = normalize_filename_with_deepseek(uploaded_file.name, deepseek_config)
+                    else:
+                        cleaned = {"source_file": uploaded_file.name}
+
+                    extension = Path(uploaded_file.name).suffix.lower().lstrip(".")
+                    evidence_kind = _cleanup_evidence_kind(uploaded_file.name)
+                    cleaned["上传位置"] = report
+                    cleaned["sample_no"] = str(sample_no or cleaned.get("sample_no") or "1").strip()
+                    cleaned["report_type"] = report
+                    if order_id.strip():
+                        cleaned["order_id"] = order_id.strip()
+                    elif not cleaned.get("order_id"):
+                        cleaned["order_id"] = "待补充"
+                    if report == "CKM3":
+                        cleaned["material_id"] = str(material_id or cleaned.get("material_id") or "待补充").strip()
+                    cleaned["evidence_kind"] = evidence_kind
+                    cleaned["extension"] = extension
+                    cleaned["standard_filename"] = _standard_cleanup_filename(
+                        sample_no=cleaned["sample_no"],
+                        order_id=cleaned["order_id"],
+                        material_id=cleaned.get("material_id") or "",
+                        report=report,
+                        evidence_kind=evidence_kind,
+                        extension=extension,
+                    )
+                    cleaned["file_bytes"] = file_bytes
+
+                    field_status = "非表格文件，未检查字段"
+                    missing_fields = []
+                    if uploaded_file.name.lower().endswith((".xlsx", ".xlsm", ".csv")):
+                        safe_name = Path(uploaded_file.name).name
+                        temp_path = temp_dir / safe_name
+                        temp_path.write_bytes(file_bytes)
+                        report_for_check = report if report in {"CO03", "KSBT", "3611", "CKM3"} else cleaned["report_type"]
+                        workbook_result = analyze_workbook(temp_path, report_for_check)
+                        missing_fields = workbook_result.get("missing_fields") or []
+                        field_status = "完整" if not missing_fields else "缺失字段"
+
+                    cleaned["field_status"] = field_status
+                    cleaned["missing_fields"] = missing_fields
+                    cleaned["missing_field_labels"] = display_missing_fields(cleaned["report_type"], missing_fields)
+                    cleaned["source"] = "DeepSeek 文件名清洗 + Excel 字段检查"
+                    results.append(cleaned)
+        st.session_state["filename_cleanup_results"] = results
+        st.session_state["standard_named_zip_bytes"] = build_standard_named_zip_bytes(results)
+    except Exception as exc:
+        st.session_state["filename_cleanup_error"] = str(exc)
+
+
+def run_ckm3_ocr_to_excel(uploaded_files) -> None:
+    st.session_state["ckm3_ocr_excels"] = []
+    st.session_state.pop("ckm3_ocr_error", None)
+    if not online_ocr_available(online_ocr_config):
+        st.session_state["ckm3_ocr_error"] = "在线 PaddleOCR 服务未配置，无法识别 CKM3 截图。"
+        return
+
+    image_files = [item for item in uploaded_files or [] if is_image_file(item.name)]
+    if not image_files:
+        st.session_state["ckm3_ocr_error"] = "请上传 CKM3 截图文件（PNG/JPG/JPEG/PDF）。"
+        return
+
+    results = []
+    try:
+        for uploaded_file in image_files:
+            uploaded_file.seek(0)
+            ocr_result = recognize_uploaded_image(uploaded_file, online_ocr_config)
+            ocr_text = ocr_result.get("text") or ""
+            rows = extract_ckm3_rows(ocr_text)
+            if not rows:
+                results.append(
+                    {
+                        "source_file": uploaded_file.name,
+                        "status": "未识别到 CKM3 表格行",
+                        "row_count": 0,
+                        "ocr_text": ocr_text,
+                    }
+                )
+                continue
+            output_name = f"{Path(uploaded_file.name).stem}-CKM3-表格.xlsx"
+            results.append(
+                {
+                    "source_file": uploaded_file.name,
+                    "status": "已生成",
+                    "file_name": output_name,
+                    "row_count": len(rows),
+                    "bytes": build_ckm3_workbook_bytes(ocr_text),
+                    "ocr_text": ocr_text,
+                }
+            )
+        st.session_state["ckm3_ocr_excels"] = results
+    except Exception as exc:
+        st.session_state["ckm3_ocr_error"] = str(exc)
 
 
 def run_ocr_cleanup(uploaded_files) -> None:
@@ -683,6 +882,196 @@ def run_ocr_cleanup(uploaded_files) -> None:
         st.session_state["ocr_cleanup_error"] = str(exc)
 
 
+def run_intelligent_cleanup(uploaded_files) -> None:
+    st.session_state.pop("intelligent_cleanup_error", None)
+    st.session_state.pop("intelligent_cleanup_excel", None)
+    st.session_state["generated_support_excels"] = []
+    st.session_state["filename_cleanup_results"] = []
+    st.session_state["ocr_cleanup_results"] = []
+
+    if not deepseek_config:
+        st.session_state["intelligent_cleanup_error"] = "DeepSeek API Key 未配置，无法执行智能清洗。"
+        return
+
+    filename_results = []
+    ocr_results = []
+    try:
+        for uploaded_file in uploaded_files or []:
+            filename_results.append(normalize_filename_with_deepseek(uploaded_file.name, deepseek_config))
+
+        if online_ocr_available(online_ocr_config):
+            image_files = [item for item in uploaded_files or [] if is_image_file(item.name)]
+            for uploaded_file in image_files:
+                ocr_result = recognize_uploaded_image(uploaded_file, online_ocr_config)
+                cleaned = clean_ocr_text_with_deepseek(
+                    uploaded_file.name,
+                    ocr_result.get("text") or "",
+                    deepseek_config,
+                )
+                ocr_results.append(
+                    {
+                        "source_file": uploaded_file.name,
+                        "ocr_text": ocr_result.get("text") or "",
+                        "ocr_line_count": ocr_result.get("line_count", 0),
+                        "cleaned": cleaned,
+                    }
+                )
+                if (cleaned.get("report_type") or "").upper() == "CKM3":
+                    ckm3_rows = extract_ckm3_rows(ocr_result.get("text") or "")
+                    if ckm3_rows:
+                        standard_filename = cleaned.get("standard_filename") or uploaded_file.name
+                        file_name = standard_filename.replace("截图", "表格")
+                        if not file_name.lower().endswith(".xlsx"):
+                            file_name = f"{Path(file_name).stem}.xlsx"
+                        st.session_state["generated_support_excels"].append(
+                            {
+                                "source_file": uploaded_file.name,
+                                "file_name": file_name,
+                                "report_type": "CKM3",
+                                "row_count": len(ckm3_rows),
+                                "bytes": build_ckm3_workbook_bytes(ocr_result.get("text") or ""),
+                            }
+                        )
+
+        st.session_state["filename_cleanup_results"] = filename_results
+        st.session_state["ocr_cleanup_results"] = ocr_results
+        st.session_state["intelligent_cleanup_excel"] = build_cleanup_excel_bytes(filename_results, ocr_results)
+    except Exception as exc:
+        st.session_state["intelligent_cleanup_error"] = str(exc)
+
+
+def build_cleanup_excel_bytes(filename_results: list[dict], ocr_results: list[dict]) -> bytes:
+    workbook = Workbook()
+    summary_sheet = workbook.active
+    summary_sheet.title = "识别清洗结果"
+    headers = [
+        "来源",
+        "原始文件",
+        "样本号",
+        "订单编号",
+        "物料ID",
+        "报表类型",
+        "证据类型",
+        "建议标准文件名",
+        "置信度",
+        "OCR行数",
+        "备注",
+    ]
+    _write_header(summary_sheet, headers)
+    row_index = 2
+    for item in filename_results:
+        _write_cleanup_row(summary_sheet, row_index, "DeepSeek 文件名清洗", item)
+        row_index += 1
+    for item in ocr_results:
+        cleaned = item.get("cleaned") or {}
+        _write_cleanup_row(
+            summary_sheet,
+            row_index,
+            "在线 PaddleOCR + DeepSeek",
+            cleaned,
+            source_file=item.get("source_file"),
+            ocr_line_count=item.get("ocr_line_count"),
+        )
+        row_index += 1
+    summary_sheet.freeze_panes = "A2"
+    for column in summary_sheet.columns:
+        summary_sheet.column_dimensions[column[0].column_letter].width = min(
+            max(len(str(cell.value or "")) for cell in column) + 2,
+            42,
+        )
+
+    ocr_sheet = workbook.create_sheet("OCR原文")
+    _write_header(ocr_sheet, ["原始文件", "OCR原文"])
+    for row_index, item in enumerate(ocr_results, start=2):
+        ocr_sheet.cell(row=row_index, column=1, value=item.get("source_file"))
+        ocr_sheet.cell(row=row_index, column=2, value=item.get("ocr_text"))
+    ocr_sheet.column_dimensions["A"].width = 42
+    ocr_sheet.column_dimensions["B"].width = 100
+    ocr_sheet.freeze_panes = "A2"
+
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def build_filename_cleanup_excel_bytes(cleanup_results: list[dict]) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "标准文件名清洗结果"
+    headers = [
+        "上传位置",
+        "原始文件",
+        "样本号",
+        "订单编号",
+        "物料ID",
+        "识别类型",
+        "证据类型",
+        "建议标准文件名",
+        "字段检查",
+        "缺失字段",
+    ]
+    _write_header(sheet, headers)
+    for row_index, item in enumerate(cleanup_results, start=2):
+        values = [
+            item.get("上传位置"),
+            item.get("source_file"),
+            item.get("sample_no"),
+            item.get("order_id"),
+            item.get("material_id"),
+            item.get("report_type"),
+            item.get("evidence_kind"),
+            item.get("standard_filename"),
+            item.get("field_status"),
+            "、".join(item.get("missing_field_labels") or []),
+        ]
+        for column_index, value in enumerate(values, start=1):
+            sheet.cell(row=row_index, column=column_index, value=value)
+    sheet.freeze_panes = "A2"
+    for column in sheet.columns:
+        sheet.column_dimensions[column[0].column_letter].width = min(
+            max(len(str(cell.value or "")) for cell in column) + 2,
+            52,
+        )
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _write_header(sheet, headers: list[str]) -> None:
+    fill = PatternFill("solid", fgColor="00338D")
+    font = Font(color="FFFFFF", bold=True)
+    for column_index, header in enumerate(headers, start=1):
+        cell = sheet.cell(row=1, column=column_index, value=header)
+        cell.fill = fill
+        cell.font = font
+
+
+def _write_cleanup_row(
+    sheet,
+    row_index: int,
+    source: str,
+    item: dict,
+    *,
+    source_file: str | None = None,
+    ocr_line_count: int | None = None,
+) -> None:
+    values = [
+        source,
+        source_file or item.get("source_file"),
+        item.get("sample_no"),
+        item.get("order_id"),
+        item.get("material_id"),
+        item.get("report_type"),
+        item.get("evidence_kind"),
+        item.get("standard_filename"),
+        item.get("confidence"),
+        ocr_line_count,
+        item.get("notes"),
+    ]
+    for column_index, value in enumerate(values, start=1):
+        sheet.cell(row=row_index, column=column_index, value=value)
+
+
 deepseek_config = load_deepseek_config(st.secrets)
 online_ocr_config = load_online_ocr_config(st.secrets)
 
@@ -717,8 +1106,10 @@ with step_col:
         nav_items = [
             (1, "1  选择场景", "成本方法、程序和审计期间"),
             (2, "2  输入参数", "样本文件与命名规则"),
-            (3, "3  上传证据", "CO03、KSBT、3611、CKM3"),
-            (4, "4  复核结果", "异常、映射和追溯链"),
+            (3, "3  CKM3截图OCR识别", "可选：截图生成 CKM3 Excel"),
+            (4, "4  文件名清洗", "可选：标准命名与字段完整性"),
+            (5, "5  上传证据", "CO03、KSBT、3611、CKM3"),
+            (6, "6  复核结果", "异常、映射和追溯链"),
         ]
         for step, label, caption in nav_items:
             st.button(
@@ -841,38 +1232,97 @@ with work_col:
             st.markdown(
                 """
                 <div class="main-title">
-                  <h2>上传证据</h2>
-                  <p>上传 CO03、KSBT、3611、CKM3 支持文件或 zip 包，然后开始分析生成底稿结果。</p>
+                  <h2>CKM3截图OCR识别</h2>
+                  <p>这一步只处理 CKM3 截图。如果你已经有 CKM3 表格 Excel，可以直接跳过，进入文件名清洗。</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-            st.markdown("#### 数据识别与清洗")
-            clean_col, config_col = st.columns([1.25, 1])
-            with clean_col:
-                enable_ocr_cleanup = st.checkbox(
-                    "启用 OCR 识别与字段清洗",
-                    value=False,
-                    help="用于后续从截图中识别订单编号、物料 ID、报表类型等关键字段，并生成缺失的支持性表格。",
-                    key="enable_ocr_cleanup",
+            ocr_col, config_col = st.columns([1.25, 1])
+            with ocr_col:
+                st.info("仅用于 CKM3 截图，识别后生成可替代 CKM3-表格.xlsx 的支持性 Excel。CO03、KSBT、3611 仍优先使用 SAP 导出的 Excel/CSV。")
+            with config_col:
+                if online_ocr_available(online_ocr_config):
+                    st.success("在线 PaddleOCR 服务已配置")
+                else:
+                    st.warning("在线 PaddleOCR 服务未配置，CKM3 OCR 暂不可用。")
+
+            ckm3_ocr_files = st.file_uploader(
+                "上传 CKM3 截图（PNG/JPG/JPEG/PDF）",
+                type=["png", "jpg", "jpeg", "pdf"],
+                accept_multiple_files=True,
+                key="ckm3_ocr_files",
+            )
+            st.button(
+                "仅识别 CKM3 截图并生成 Excel",
+                disabled=not ckm3_ocr_files or not online_ocr_available(online_ocr_config),
+                type="primary",
+                on_click=run_ckm3_ocr_to_excel,
+                args=(ckm3_ocr_files,),
+            )
+
+            ckm3_ocr_error = st.session_state.get("ckm3_ocr_error")
+            if ckm3_ocr_error:
+                st.error(ckm3_ocr_error)
+
+            ckm3_ocr_excels = st.session_state.get("ckm3_ocr_excels") or []
+            if ckm3_ocr_excels:
+                st.dataframe(
+                    [
+                        {
+                            "来源截图": item.get("source_file"),
+                            "状态": item.get("status"),
+                            "生成文件": item.get("file_name") or "-",
+                            "明细行数": item.get("row_count"),
+                        }
+                        for item in ckm3_ocr_excels
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
                 )
-                enable_filename_cleanup = st.checkbox(
-                    "启用文件名清洗为标准格式",
-                    value=False,
-                    help="用于后续把非标准命名的截图或表格识别为样本号、订单编号、报表类型，并建议标准文件名。",
-                    key="enable_filename_cleanup",
-                )
+                for index, item in enumerate(ckm3_ocr_excels, start=1):
+                    if item.get("bytes"):
+                        st.download_button(
+                            f"下载 CKM3 OCR 生成 Excel #{index}",
+                            data=item["bytes"],
+                            file_name=Path(item.get("file_name") or f"ckm3_ocr_{index}.xlsx").name,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="secondary",
+                        )
+                with st.expander("查看 CKM3 OCR 原文"):
+                    for item in ckm3_ocr_excels:
+                        st.markdown(f"**{item.get('source_file')}**")
+                        st.text(item.get("ocr_text") or "")
+
+            back_col, skip_col, next_col = st.columns([1, 1, 1])
+            with back_col:
+                st.button("返回上一步", on_click=go_to_step, args=(2,))
+            with skip_col:
+                st.button("跳过 CKM3 OCR", on_click=go_next_from_ckm3_ocr)
+            with next_col:
+                st.button("下一步：文件名清洗", type="primary", on_click=go_next_from_ckm3_ocr)
+
+    elif active_step == 4:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="main-title">
+                  <h2>文件名清洗</h2>
+                  <p>这一步可选。若你已经拥有正确命名的文件，可以直接跳过；否则可按 CO03、KSBT、3611、CKM3 上传到对应位置进行标准化清洗和字段检查。</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            config_col, action_col = st.columns([1.2, 1])
             with config_col:
                 if deepseek_config:
                     st.success(f"DeepSeek 已配置：{deepseek_config.model}")
                 else:
-                    st.warning("DeepSeek API Key 未配置，清洗功能暂不可用。")
-                    st.caption("在 Streamlit Cloud 的 Secrets 中添加 DEEPSEEK_API_KEY 后即可启用。")
-                if online_ocr_available(online_ocr_config):
-                    st.success("在线 PaddleOCR 服务已配置")
-                else:
-                    st.warning("在线 PaddleOCR 服务未配置，OCR 功能暂不可用。")
+                    st.warning("DeepSeek API Key 未配置，将仅按输入信息和上传位置生成标准文件名。")
+                    st.caption("在 Streamlit Cloud 的 Secrets 中添加 DEEPSEEK_API_KEY 后，可辅助识别原始文件名。")
+            with action_col:
                 st.button(
                     "测试 DeepSeek 连接",
                     disabled=not deepseek_config,
@@ -885,11 +1335,128 @@ with work_col:
                     else:
                         st.error(deepseek_status.get("message"))
 
-            if (enable_ocr_cleanup or enable_filename_cleanup) and not deepseek_config:
-                st.info("当前会继续执行本地文件识别；DeepSeek 清洗会在配置 API Key 后启用。")
+            sample_col, order_col, material_col = st.columns(3)
+            with sample_col:
+                cleanup_sample_no = st.text_input(
+                    "样本编号",
+                    value="1",
+                    key="cleanup_sample_no",
+                    placeholder="例如 1",
+                )
+            with order_col:
+                cleanup_order_id = st.text_input(
+                    "订单编号",
+                    key="cleanup_order_id",
+                    placeholder="例如 11000437",
+                )
+            with material_col:
+                cleanup_material_id = st.text_input(
+                    "CKM3 物料ID",
+                    key="cleanup_material_id",
+                    placeholder="例如 13014012",
+                )
+
+            st.markdown(
+                """
+                <div class="upload-rules">
+                  <strong>文件名清洗说明</strong><br>
+                  请按文件所属类型上传到对应位置。DeepSeek 会识别并建议标准命名，例如
+                  <code>样本1/1.订单编号11000437-CO03-表格.xlsx</code>、
+                  <code>样本1/1.订单编号11000437-3611-截图.png</code>、
+                  <code>样本1/1.订单编号11000437-物料ID-13014012-CKM3-截图.png</code>。
+                  若 CO03、KSBT、3611、CKM3 都上传截图和 Excel，将导出 4×2 个标准命名文件。Excel/CSV 文件还会检查是否包含关键字段。
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            bucket_cols = st.columns(4)
+            bucket_files = {}
+            for column, report in zip(bucket_cols, ["CO03", "KSBT", "3611", "CKM3"]):
+                with column:
+                    bucket_files[report] = st.file_uploader(
+                        f"{report} 文件",
+                        type=["xlsx", "xlsm", "csv", "png", "jpg", "jpeg", "pdf"],
+                        accept_multiple_files=True,
+                        key=f"cleanup_{report.lower()}_files",
+                    )
+
+            total_cleanup_files = sum(len(files or []) for files in bucket_files.values())
+            st.button(
+                "运行文件名清洗",
+                disabled=total_cleanup_files == 0,
+                type="primary",
+                on_click=run_filename_cleanup_by_bucket,
+                args=(cleanup_sample_no, cleanup_order_id, cleanup_material_id, bucket_files),
+            )
+
+            cleanup_error = st.session_state.get("filename_cleanup_error")
+            if cleanup_error:
+                st.error(cleanup_error)
+
+            cleanup_results = st.session_state.get("filename_cleanup_results") or []
+            if cleanup_results:
+                cleanup_table_rows = [
+                    {
+                        "上传位置": item.get("上传位置"),
+                        "原始文件": item.get("source_file"),
+                        "样本号": item.get("sample_no") or "-",
+                        "订单编号": item.get("order_id") or "-",
+                        "物料ID": item.get("material_id") or "-",
+                        "识别类型": item.get("report_type") or "-",
+                        "证据类型": item.get("evidence_kind") or "-",
+                        "建议标准文件名": item.get("standard_filename") or "-",
+                        "字段检查": item.get("field_status") or "-",
+                        "缺失字段": "、".join(item.get("missing_field_labels") or []) or "-",
+                    }
+                    for item in cleanup_results
+                ]
+                st.dataframe(
+                    cleanup_table_rows,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                standard_zip_bytes = st.session_state.get("standard_named_zip_bytes")
+                if standard_zip_bytes:
+                    st.download_button(
+                        "导出标准命名文件包 ZIP",
+                        data=standard_zip_bytes,
+                        file_name=f"样本{cleanup_sample_no or '1'}_标准命名文件包.zip",
+                        mime="application/zip",
+                        type="primary",
+                    )
+                st.download_button(
+                    "下载标准文件名清洗清单 Excel",
+                    data=build_filename_cleanup_excel_bytes(cleanup_results),
+                    file_name="AI-MESP_标准文件名清洗结果.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="secondary",
+                )
+
+            back_col, next_col = st.columns([1, 1])
+            with back_col:
+                st.button("返回上一步", on_click=go_to_step, args=(3,))
+            with next_col:
+                st.button(
+                    "跳过或确认清洗，进入上传证据",
+                    type="primary",
+                    on_click=go_next_from_filename_cleanup,
+                )
+
+    elif active_step == 5:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="main-title">
+                  <h2>上传证据</h2>
+                  <p>上传最终支持文件或 zip 包，然后开始分析生成 SPP 文件和对应底稿结果。</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
             uploaded_files = st.file_uploader(
-                "上传支持文件或 zip 包",
+                "上传最终支持文件或 zip 包",
                 type=["xlsx", "xlsm", "csv", "png", "jpg", "jpeg", "pdf", "zip"],
                 accept_multiple_files=True,
                 key="supporting_files",
@@ -898,75 +1465,6 @@ with work_col:
             if uploaded_files:
                 st.session_state["has_uploaded_files"] = True
                 st.write(f"已选择 {len(uploaded_files)} 个文件。")
-
-            if enable_filename_cleanup:
-                cleanup_disabled = not uploaded_files or not deepseek_config
-                st.button(
-                    "运行文件名清洗",
-                    disabled=cleanup_disabled,
-                    on_click=run_filename_cleanup,
-                    args=(uploaded_files,),
-                )
-                cleanup_error = st.session_state.get("filename_cleanup_error")
-                cleanup_results = st.session_state.get("filename_cleanup_results") or []
-                if cleanup_error:
-                    st.error(cleanup_error)
-                if cleanup_results:
-                    st.dataframe(
-                        [
-                            {
-                                "原始文件": item.get("source_file"),
-                                "样本号": item.get("sample_no") or "-",
-                                "订单编号": item.get("order_id") or "-",
-                                "物料ID": item.get("material_id") or "-",
-                                "报表类型": item.get("report_type") or "-",
-                                "建议标准文件名": item.get("standard_filename") or "-",
-                                "置信度": item.get("confidence") or "-",
-                                "来源": "DeepSeek 文件名清洗",
-                            }
-                            for item in cleanup_results
-                        ],
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-            if enable_ocr_cleanup:
-                image_count = len([item for item in uploaded_files or [] if is_image_file(item.name)])
-                st.button(
-                    "运行 OCR 识别与清洗",
-                    disabled=not uploaded_files or not deepseek_config or not online_ocr_available(online_ocr_config),
-                    on_click=run_ocr_cleanup,
-                    args=(uploaded_files,),
-                )
-                if uploaded_files:
-                    st.caption(f"可 OCR 图片数：{image_count}")
-
-                ocr_error = st.session_state.get("ocr_cleanup_error")
-                ocr_results = st.session_state.get("ocr_cleanup_results") or []
-                if ocr_error:
-                    st.error(ocr_error)
-                if ocr_results:
-                    st.dataframe(
-                        [
-                            {
-                                "原始文件": item.get("source_file"),
-                                "OCR行数": item.get("ocr_line_count"),
-                                "样本号": (item.get("cleaned") or {}).get("sample_no") or "-",
-                                "订单编号": (item.get("cleaned") or {}).get("order_id") or "-",
-                                "物料ID": (item.get("cleaned") or {}).get("material_id") or "-",
-                                "报表类型": (item.get("cleaned") or {}).get("report_type") or "-",
-                                "建议标准文件名": (item.get("cleaned") or {}).get("standard_filename") or "-",
-                                "来源": "在线 PaddleOCR + DeepSeek",
-                            }
-                            for item in ocr_results
-                        ],
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-                    with st.expander("查看 OCR 原文"):
-                        for item in ocr_results:
-                            st.markdown(f"**{item.get('source_file')}**")
-                            st.text(item.get("ocr_text") or "")
 
             analyze_clicked = st.button("Analyze", type="primary", disabled=not uploaded_files)
 
@@ -999,10 +1497,10 @@ with work_col:
                 "supporting_bytes": supporting_bytes,
                 "selected_spd_bytes": selected_spd_bytes,
             }
-            st.session_state["current_step"] = 4
+            st.session_state["current_step"] = 6
             st.rerun()
 
-    elif active_step == 4:
+    elif active_step == 6:
         bundle = st.session_state.get("analysis_bundle")
         if not bundle:
             st.info("请先上传证据并点击 Analyze，完成后这里会展示复核结果。")
