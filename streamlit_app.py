@@ -529,6 +529,24 @@ def render_trace(items: list[dict]) -> None:
     )
 
 
+def mark_scenario_started() -> None:
+    st.session_state["scenario_started"] = True
+
+
+def get_active_step() -> int:
+    if st.session_state.get("analysis_bundle"):
+        return 4
+    if st.session_state.get("supporting_files"):
+        return 3
+    if st.session_state.get("scenario_started"):
+        return 2
+    return 1
+
+
+def step_class(step: int, active_step: int) -> str:
+    return "step-item active" if step == active_step else "step-item"
+
+
 st.markdown(
     f"""
     <a class="theme-button" href="?theme={next_theme}" target="_self" rel="noopener">{theme_label}</a>
@@ -551,24 +569,25 @@ st.markdown(
 
 st.markdown('<div class="mesp-shell">', unsafe_allow_html=True)
 step_col, work_col = st.columns([1.05, 3.75], gap="large")
+active_step = get_active_step()
 
 with step_col:
     st.markdown(
-        """
+        f"""
         <div class="step-card">
-          <div class="step-item active">
+          <div class="{step_class(1, active_step)}">
             <div class="step-no">1</div>
             <div><strong>选择场景</strong><span>成本方法、程序和审计期间</span></div>
           </div>
-          <div class="step-item">
+          <div class="{step_class(2, active_step)}">
             <div class="step-no">2</div>
             <div><strong>输入参数</strong><span>样本文件与命名规则</span></div>
           </div>
-          <div class="step-item">
+          <div class="{step_class(3, active_step)}">
             <div class="step-no">3</div>
             <div><strong>上传证据</strong><span>CO03、KSBT、3611、CKM3</span></div>
           </div>
-          <div class="step-item">
+          <div class="{step_class(4, active_step)}">
             <div class="step-no">4</div>
             <div><strong>复核结果</strong><span>异常、映射和追溯链</span></div>
           </div>
@@ -591,9 +610,20 @@ with work_col:
 
         method_col, period_col = st.columns([1.1, 1.1], gap="large")
         with method_col:
-            st.selectbox("成本方法", ["标准成本法"], index=0)
+            st.selectbox(
+                "成本方法",
+                ["标准成本法"],
+                index=0,
+                key="cost_method",
+                on_change=mark_scenario_started,
+            )
         with period_col:
-            period = st.text_input("审计期间", value="2025.01.01-2025.12.31")
+            period = st.text_input(
+                "审计期间",
+                value="2025.01.01-2025.12.31",
+                key="audit_period",
+                on_change=mark_scenario_started,
+            )
 
         st.markdown(
             """
@@ -623,6 +653,8 @@ with work_col:
             ["SPD03012", "SPD03014", "SPD03015"],
             horizontal=True,
             label_visibility="collapsed",
+            key="test_program",
+            on_change=mark_scenario_started,
         )
 
         st.markdown("#### 上传证据")
@@ -630,6 +662,7 @@ with work_col:
             "上传支持文件或 zip 包",
             type=["xlsx", "xlsm", "csv", "png", "jpg", "jpeg", "pdf", "zip"],
             accept_multiple_files=True,
+            key="supporting_files",
         )
 
         st.markdown(
