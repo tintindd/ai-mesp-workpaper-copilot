@@ -25,6 +25,18 @@ st.set_page_config(
     layout="wide",
 )
 
+query_theme = st.query_params.get("theme", st.session_state.get("ui_theme", "light"))
+if isinstance(query_theme, list):
+    query_theme = query_theme[0] if query_theme else "light"
+if query_theme not in {"light", "dark"}:
+    query_theme = "light"
+
+st.session_state["ui_theme"] = query_theme
+theme_is_dark = query_theme == "dark"
+theme_class = "theme-dark" if theme_is_dark else "theme-light"
+next_theme = "light" if theme_is_dark else "dark"
+theme_label = "日间" if theme_is_dark else "夜间"
+
 st.markdown(
     """
     <style>
@@ -202,16 +214,120 @@ st.markdown(
         height: .95rem;
         fill: currentColor;
     }
+    .theme-button {
+        position: fixed;
+        top: .45rem;
+        right: 5.05rem;
+        z-index: 10000;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: .45rem .72rem;
+        border: 1px solid rgba(255,255,255,.25);
+        border-radius: .2rem;
+        background: rgba(8, 12, 20, .72);
+        color: #fff !important;
+        font-size: .78rem;
+        font-weight: 800;
+        text-decoration: none !important;
+        line-height: 1;
+        box-shadow: 0 .25rem .75rem rgba(0,0,0,.22);
+        backdrop-filter: blur(6px);
+    }
+    .theme-button:hover {
+        background: rgba(0, 51, 141, .92);
+        border-color: rgba(255,255,255,.45);
+    }
+    .theme-dark {
+        background: #05070b;
+        color: #f8fafc;
+        min-height: 100vh;
+    }
+    .theme-dark .mesp-hero {
+        background: linear-gradient(120deg, #030712 0%, #06142f 54%, #00338d 100%);
+        border-bottom-color: rgba(255,255,255,.08);
+    }
+    .theme-dark .step-card,
+    .theme-dark div[data-testid="stVerticalBlockBorderWrapper"],
+    .theme-dark .program-card,
+    .theme-dark div[data-testid="stMetric"] {
+        background: #0b0f19 !important;
+        border-color: #20293a !important;
+        box-shadow: 0 1rem 2rem rgba(0,0,0,.38) !important;
+    }
+    .theme-dark .step-item.active {
+        background: #0e2444;
+        color: #93c5fd;
+    }
+    .theme-dark .step-no {
+        border-color: #4b638a;
+        color: #93c5fd;
+    }
+    .theme-dark .step-item span,
+    .theme-dark .main-title p,
+    .theme-dark div[data-testid="stMetric"] label {
+        color: #9aa8bd !important;
+    }
+    .theme-dark .program-code,
+    .theme-dark div[data-testid="stMetricValue"] {
+        color: #60a5fa !important;
+    }
+    .theme-dark .pill {
+        background: #111827;
+        border-color: #2a3548;
+        color: #dbeafe;
+    }
+    .theme-dark .upload-rules {
+        background: #0b1728;
+        border-color: #1e3a5f;
+        color: #bfdbfe;
+    }
+    .theme-dark .upload-rules code {
+        background: #0f172a;
+        border-color: #2a3548;
+        color: #93c5fd;
+    }
+    .theme-dark input,
+    .theme-dark textarea,
+    .theme-dark select,
+    .theme-dark [data-baseweb="select"] > div,
+    .theme-dark [data-testid="stFileUploaderDropzone"] {
+        background: #090d15 !important;
+        color: #f8fafc !important;
+        border-color: #263246 !important;
+    }
+    .theme-dark [data-testid="stDataFrame"],
+    .theme-dark [data-testid="stTable"] {
+        background: #0b0f19 !important;
+    }
     @media (max-width: 900px) {
         .mesp-hero { padding: 1.6rem 1.4rem; align-items: flex-start; flex-direction: column; }
         .mesp-shell { width: calc(100vw - 1.5rem); margin-top: 1rem; }
         .program-help { grid-template-columns: 1fr; }
         .fork-button { top: .35rem; right: .35rem; }
+        .theme-button { top: .35rem; right: 4.85rem; }
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+if theme_is_dark:
+    st.markdown(
+        """
+        <style>
+        .stApp,
+        [data-testid="stAppViewContainer"] {
+            background: #05070b !important;
+            color: #f8fafc !important;
+        }
+        [data-testid="stHeader"] {
+            background: transparent !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def save_uploaded_files(uploaded_files, target_dir: Path) -> int:
@@ -307,8 +423,11 @@ def render_trace(items: list[dict]) -> None:
     )
 
 
+st.markdown(f'<div class="{theme_class}">', unsafe_allow_html=True)
+
 st.markdown(
-    """
+    f"""
+    <a class="theme-button" href="?theme={next_theme}" target="_self" rel="noopener">{theme_label}</a>
     <a class="fork-button" href="https://github.com/tintindd/ai-mesp-workpaper-copilot" target="_blank" rel="noopener">
       <span>Fork</span>
       <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -509,4 +628,4 @@ with work_col:
     else:
         st.info("请上传符合命名要求的 CO03、KSBT、3611、CKM3 支持文件或 zip 包。")
 
-st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("</div></div>", unsafe_allow_html=True)
