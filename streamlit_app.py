@@ -531,16 +531,44 @@ def render_trace(items: list[dict]) -> None:
 
 def mark_scenario_started() -> None:
     st.session_state["scenario_started"] = True
+    st.session_state["params_confirmed"] = False
+    st.session_state["has_uploaded_files"] = False
+    st.session_state.pop("analysis_bundle", None)
 
 
-def get_active_step() -> int:
+def go_to_step(step: int) -> None:
+    if step <= get_unlocked_step():
+        st.session_state["current_step"] = step
+
+
+def go_next_from_scenario() -> None:
+    st.session_state["scenario_started"] = True
+    st.session_state["current_step"] = 2
+
+
+def go_next_from_params() -> None:
+    st.session_state["scenario_started"] = True
+    st.session_state["params_confirmed"] = True
+    st.session_state["current_step"] = 3
+
+
+def get_unlocked_step() -> int:
     if st.session_state.get("analysis_bundle"):
         return 4
-    if st.session_state.get("supporting_files"):
+    if st.session_state.get("params_confirmed") or st.session_state.get("has_uploaded_files"):
         return 3
     if st.session_state.get("scenario_started"):
         return 2
     return 1
+
+
+def get_active_step() -> int:
+    if "current_step" not in st.session_state:
+        st.session_state["current_step"] = 1
+    unlocked_step = get_unlocked_step()
+    if st.session_state["current_step"] > unlocked_step:
+        st.session_state["current_step"] = unlocked_step
+    return st.session_state["current_step"]
 
 
 def step_class(step: int, active_step: int) -> str:
@@ -570,199 +598,237 @@ st.markdown(
 st.markdown('<div class="mesp-shell">', unsafe_allow_html=True)
 step_col, work_col = st.columns([1.05, 3.75], gap="large")
 active_step = get_active_step()
+unlocked_step = get_unlocked_step()
 
 with step_col:
-    st.markdown(
-        f"""
-        <div class="step-card">
-          <div class="{step_class(1, active_step)}">
-            <div class="step-no">1</div>
-            <div><strong>选择场景</strong><span>成本方法、程序和审计期间</span></div>
-          </div>
-          <div class="{step_class(2, active_step)}">
-            <div class="step-no">2</div>
-            <div><strong>输入参数</strong><span>样本文件与命名规则</span></div>
-          </div>
-          <div class="{step_class(3, active_step)}">
-            <div class="step-no">3</div>
-            <div><strong>上传证据</strong><span>CO03、KSBT、3611、CKM3</span></div>
-          </div>
-          <div class="{step_class(4, active_step)}">
-            <div class="step-no">4</div>
-            <div><strong>复核结果</strong><span>异常、映射和追溯链</span></div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    with st.container(border=True):
+        nav_items = [
+            (1, "1  选择场景", "成本方法、程序和审计期间"),
+            (2, "2  输入参数", "样本文件与命名规则"),
+            (3, "3  上传证据", "CO03、KSBT、3611、CKM3"),
+            (4, "4  复核结果", "异常、映射和追溯链"),
+        ]
+        for step, label, caption in nav_items:
+            st.button(
+                label,
+                key=f"nav_step_{step}",
+                type="primary" if step == active_step else "secondary",
+                disabled=step > unlocked_step,
+                use_container_width=True,
+                on_click=go_to_step,
+                args=(step,),
+            )
+            st.caption(caption if step <= unlocked_step else f"{caption}（未解锁）")
 
 with work_col:
-    with st.container(border=True):
-        st.markdown(
-            """
-            <div class="main-title">
-              <h2>选择测试场景</h2>
-              <p>先选择成本方法，再选择对应的 MESP 测试程序。系统会据此判断需要检查的支持文件和字段。</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        method_col, period_col = st.columns([1.1, 1.1], gap="large")
-        with method_col:
-            st.selectbox(
-                "成本方法",
-                ["标准成本法"],
-                index=0,
-                key="cost_method",
-                on_change=mark_scenario_started,
-            )
-        with period_col:
-            period = st.text_input(
-                "审计期间",
-                value="2025.01.01-2025.12.31",
-                key="audit_period",
-                on_change=mark_scenario_started,
+    if active_step == 1:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="main-title">
+                  <h2>选择测试场景</h2>
+                  <p>先选择成本方法、审计期间和 MESP 测试程序。系统会据此判断需要检查的支持文件和字段。</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
-        st.markdown(
-            """
-            <div class="program-help">
-              <div class="program-card">
-                <strong>标准成本法 - 固定加工成本</strong>
-                <div class="program-code">SPD03012</div>
-                <span class="pill">CO03</span><span class="pill">KSBT</span><span class="pill">3611</span>
-              </div>
-              <div class="program-card">
-                <strong>标准成本法 - 可变加工成本</strong>
-                <div class="program-code">SPD03014</div>
-                <span class="pill">CO03</span><span class="pill">KSBT</span><span class="pill">3611</span>
-              </div>
-              <div class="program-card">
-                <strong>存货成本差异分摊</strong>
-                <div class="program-code">SPD03015</div>
-                <span class="pill">CKM3</span><span class="pill">3611</span>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        program = st.radio(
-            "测试程序",
-            ["SPD03012", "SPD03014", "SPD03015"],
-            horizontal=True,
-            label_visibility="collapsed",
-            key="test_program",
-            on_change=mark_scenario_started,
-        )
-
-        st.markdown("#### 上传证据")
-        uploaded_files = st.file_uploader(
-            "上传支持文件或 zip 包",
-            type=["xlsx", "xlsm", "csv", "png", "jpg", "jpeg", "pdf", "zip"],
-            accept_multiple_files=True,
-            key="supporting_files",
-        )
-
-        st.markdown(
-            """
-            <div class="upload-rules">
-              <strong>命名要求</strong><br>
-              zip 包内建议按 <code>样本1/</code>、<code>样本2/</code> 建文件夹；每个样本至少包含
-              <code>CO03</code>、<code>KSBT</code>、<code>3611</code>、<code>CKM3</code> 表格文件，可同时包含对应截图。<br>
-              文件名需包含样本号、订单编号和报表类型，例如：
-              <code>样本3/3.订单编号11001846-CO03-表格.xlsx</code>、
-              <code>样本3/3.订单编号11001846-CO03-截图.png</code>、
-              <code>样本3/3.订单编号11001846-KSBT-表格.xlsx</code>、
-              <code>样本3/3.订单编号11001846-3611-表格.xlsx</code>、
-              <code>样本3/3.订单编号11001846-物料ID-13012857-CKM3-表格.xlsx</code>。
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        if uploaded_files:
-            st.write(f"已选择 {len(uploaded_files)} 个文件。")
-
-        analyze_clicked = st.button("Analyze", type="primary", disabled=not uploaded_files)
-
-    if analyze_clicked:
-        with tempfile.TemporaryDirectory(prefix="mesp_streamlit_") as temp:
-            temp_dir = Path(temp)
-            saved_count = save_uploaded_files(uploaded_files, temp_dir)
-            if saved_count == 0:
-                st.error("没有可分析的文件。")
-                st.stop()
-
-            with st.spinner("正在识别 SAP 支持文件并生成复核结果..."):
-                result = analyze_folder(temp_dir, period=period, program=program)
-                supporting_bytes = build_supporting_bytes(result, temp_dir)
-                spp_dir = temp_dir / "_generated_spp"
-                spp_dir.mkdir(parents=True, exist_ok=True)
-                (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
-                summary = result.get("summary", {})
-                selected_spd_bytes = (
-                    build_spd03015_bytes(spp_dir, program=program, period=period)
-                    if summary.get("sample_count", 0) > 0 and summary.get("recognized_file_count", 0) > 0
-                    else b""
+            method_col, period_col = st.columns([1.1, 1.1], gap="large")
+            with method_col:
+                st.selectbox(
+                    "成本方法",
+                    ["标准成本法"],
+                    index=0,
+                    key="cost_method",
+                    on_change=mark_scenario_started,
+                )
+            with period_col:
+                st.text_input(
+                    "审计期间",
+                    value="2025.01.01-2025.12.31",
+                    key="audit_period",
+                    on_change=mark_scenario_started,
                 )
 
-        st.session_state["analysis_bundle"] = {
-            "result": result,
-            "program": program,
-            "supporting_bytes": supporting_bytes,
-            "selected_spd_bytes": selected_spd_bytes,
-        }
+            st.markdown(
+                """
+                <div class="program-help">
+                  <div class="program-card">
+                    <strong>标准成本法 - 固定加工成本</strong>
+                    <div class="program-code">SPD03012</div>
+                    <span class="pill">CO03</span><span class="pill">KSBT</span><span class="pill">3611</span>
+                  </div>
+                  <div class="program-card">
+                    <strong>标准成本法 - 可变加工成本</strong>
+                    <div class="program-code">SPD03014</div>
+                    <span class="pill">CO03</span><span class="pill">KSBT</span><span class="pill">3611</span>
+                  </div>
+                  <div class="program-card">
+                    <strong>存货成本差异分摊</strong>
+                    <div class="program-code">SPD03015</div>
+                    <span class="pill">CKM3</span><span class="pill">3611</span>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-    bundle = st.session_state.get("analysis_bundle")
+            st.radio(
+                "测试程序",
+                ["SPD03012", "SPD03014", "SPD03015"],
+                horizontal=True,
+                label_visibility="collapsed",
+                key="test_program",
+                on_change=mark_scenario_started,
+            )
 
-    if bundle:
-        result = bundle["result"]
-        selected_program = bundle["program"]
-        supporting_bytes = bundle["supporting_bytes"]
-        selected_spd_bytes = bundle["selected_spd_bytes"]
+            st.button("下一步", type="primary", on_click=go_next_from_scenario)
 
-        summary = result.get("summary", {})
-        cols = st.columns(5)
-        cols[0].metric("样本数", summary.get("sample_count", 0))
-        cols[1].metric("识别文件", summary.get("recognized_file_count", 0))
-        cols[2].metric("异常项", summary.get("issue_count", len(result.get("issues") or [])))
-        cols[3].metric("表格数", summary.get("workbook_count", 0))
-        cols[4].metric("已追溯项", summary.get("trace_count", len(result.get("evidence_trace") or [])))
+    elif active_step == 2:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="main-title">
+                  <h2>输入参数与命名规则</h2>
+                  <p>确认审计期间、测试程序和样本文件命名要求。确认后才会解锁上传证据。</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-        tab_issues, tab_workbooks, tab_trace, tab_download = st.tabs(
-            ["异常与追问", "SAP 表格映射", "Evidence Traceability", "底稿结果下载"]
-        )
+            summary_cols = st.columns(3)
+            summary_cols[0].metric("成本方法", st.session_state.get("cost_method", "标准成本法"))
+            summary_cols[1].metric("测试程序", st.session_state.get("test_program", "SPD03012"))
+            summary_cols[2].metric("审计期间", st.session_state.get("audit_period", "2025.01.01-2025.12.31"))
 
-        with tab_issues:
-            render_issues(result.get("issues") or [])
+            st.markdown(
+                """
+                <div class="upload-rules">
+                  <strong>命名要求</strong><br>
+                  zip 包内建议按 <code>样本1/</code>、<code>样本2/</code> 建文件夹；每个样本至少包含
+                  <code>CO03</code>、<code>KSBT</code>、<code>3611</code>、<code>CKM3</code> 表格文件，可同时包含对应截图。<br>
+                  文件名需包含样本号、订单编号和报表类型，例如：
+                  <code>样本3/3.订单编号11001846-CO03-表格.xlsx</code>、
+                  <code>样本3/3.订单编号11001846-CO03-截图.png</code>、
+                  <code>样本3/3.订单编号11001846-KSBT-表格.xlsx</code>、
+                  <code>样本3/3.订单编号11001846-3611-表格.xlsx</code>、
+                  <code>样本3/3.订单编号11001846-物料ID-13012857-CKM3-表格.xlsx</code>。
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-        with tab_workbooks:
-            render_workbooks(result.get("workbook_results") or result.get("co03_results") or [])
+            back_col, next_col = st.columns([1, 1])
+            with back_col:
+                st.button("返回上一步", on_click=go_to_step, args=(1,))
+            with next_col:
+                st.button("确认参数，下一步", type="primary", on_click=go_next_from_params)
 
-        with tab_trace:
-            render_trace(result.get("evidence_trace") or [])
+    elif active_step == 3:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="main-title">
+                  <h2>上传证据</h2>
+                  <p>上传 CO03、KSBT、3611、CKM3 支持文件或 zip 包，然后开始分析生成底稿结果。</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-        with tab_download:
-            if summary.get("sample_count", 0) == 0 or summary.get("recognized_file_count", 0) == 0:
-                st.warning("未识别到有效样本，暂不生成底稿结果。请先根据异常提示修正上传文件命名或内容。")
-            else:
-                st.download_button(
-                    "下载 SPP Supporting Excel",
-                    data=supporting_bytes,
-                    file_name="AI-MESP_SPP_Supporting.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="secondary",
-                )
-                st.download_button(
-                    f"下载 {selected_program}_IRM(SAP)",
-                    data=selected_spd_bytes,
-                    file_name=f"AI-MESP_{selected_program}_IRM(SAP).xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
-                )
-    else:
-        st.info("请上传符合命名要求的 CO03、KSBT、3611、CKM3 支持文件或 zip 包。")
+            uploaded_files = st.file_uploader(
+                "上传支持文件或 zip 包",
+                type=["xlsx", "xlsm", "csv", "png", "jpg", "jpeg", "pdf", "zip"],
+                accept_multiple_files=True,
+                key="supporting_files",
+            )
+
+            if uploaded_files:
+                st.session_state["has_uploaded_files"] = True
+                st.write(f"已选择 {len(uploaded_files)} 个文件。")
+
+            analyze_clicked = st.button("Analyze", type="primary", disabled=not uploaded_files)
+
+        if analyze_clicked:
+            period = st.session_state.get("audit_period", "2025.01.01-2025.12.31")
+            program = st.session_state.get("test_program", "SPD03012")
+            with tempfile.TemporaryDirectory(prefix="mesp_streamlit_") as temp:
+                temp_dir = Path(temp)
+                saved_count = save_uploaded_files(uploaded_files, temp_dir)
+                if saved_count == 0:
+                    st.error("没有可分析的文件。")
+                    st.stop()
+
+                with st.spinner("正在识别 SAP 支持文件并生成复核结果..."):
+                    result = analyze_folder(temp_dir, period=period, program=program)
+                    supporting_bytes = build_supporting_bytes(result, temp_dir)
+                    spp_dir = temp_dir / "_generated_spp"
+                    spp_dir.mkdir(parents=True, exist_ok=True)
+                    (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
+                    summary = result.get("summary", {})
+                    selected_spd_bytes = (
+                        build_spd03015_bytes(spp_dir, program=program, period=period)
+                        if summary.get("sample_count", 0) > 0 and summary.get("recognized_file_count", 0) > 0
+                        else b""
+                    )
+
+            st.session_state["analysis_bundle"] = {
+                "result": result,
+                "program": program,
+                "supporting_bytes": supporting_bytes,
+                "selected_spd_bytes": selected_spd_bytes,
+            }
+            st.session_state["current_step"] = 4
+            st.rerun()
+
+    elif active_step == 4:
+        bundle = st.session_state.get("analysis_bundle")
+        if not bundle:
+            st.info("请先上传证据并点击 Analyze，完成后这里会展示复核结果。")
+        else:
+            result = bundle["result"]
+            selected_program = bundle["program"]
+            supporting_bytes = bundle["supporting_bytes"]
+            selected_spd_bytes = bundle["selected_spd_bytes"]
+
+            summary = result.get("summary", {})
+            cols = st.columns(5)
+            cols[0].metric("样本数", summary.get("sample_count", 0))
+            cols[1].metric("识别文件", summary.get("recognized_file_count", 0))
+            cols[2].metric("异常项", summary.get("issue_count", len(result.get("issues") or [])))
+            cols[3].metric("表格数", summary.get("workbook_count", 0))
+            cols[4].metric("已追溯项", summary.get("trace_count", len(result.get("evidence_trace") or [])))
+
+            tab_issues, tab_workbooks, tab_trace, tab_download = st.tabs(
+                ["异常与追问", "SAP 表格映射", "Evidence Traceability", "底稿结果下载"]
+            )
+
+            with tab_issues:
+                render_issues(result.get("issues") or [])
+
+            with tab_workbooks:
+                render_workbooks(result.get("workbook_results") or result.get("co03_results") or [])
+
+            with tab_trace:
+                render_trace(result.get("evidence_trace") or [])
+
+            with tab_download:
+                if summary.get("sample_count", 0) == 0 or summary.get("recognized_file_count", 0) == 0:
+                    st.warning("未识别到有效样本，暂不生成底稿结果。请先根据异常提示修正上传文件命名或内容。")
+                else:
+                    st.download_button(
+                        "下载 SPP Supporting Excel",
+                        data=supporting_bytes,
+                        file_name="AI-MESP_SPP_Supporting.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="secondary",
+                    )
+                    st.download_button(
+                        f"下载 {selected_program}_IRM(SAP)",
+                        data=selected_spd_bytes,
+                        file_name=f"AI-MESP_{selected_program}_IRM(SAP).xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                    )
 
 st.markdown("</div>", unsafe_allow_html=True)
