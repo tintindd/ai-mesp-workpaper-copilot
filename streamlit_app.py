@@ -15,6 +15,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
 from mesp_automation_engine import analyze_folder  # noqa: E402
+from deepseek_client import load_deepseek_config  # noqa: E402
 from spd03015_exporter import build_spd03015_bytes  # noqa: E402
 from supporting_exporter import build_supporting_bytes  # noqa: E402
 
@@ -598,6 +599,9 @@ def step_class(step: int, active_step: int) -> str:
     return "step-item active" if step == active_step else "step-item"
 
 
+deepseek_config = load_deepseek_config(st.secrets)
+
+
 st.markdown(
     f"""
     <a class="theme-button" href="?theme={next_theme}" target="_self" rel="noopener">{theme_label}</a>
@@ -758,6 +762,31 @@ with work_col:
                 """,
                 unsafe_allow_html=True,
             )
+
+            st.markdown("#### 数据识别与清洗")
+            clean_col, config_col = st.columns([1.25, 1])
+            with clean_col:
+                enable_ocr_cleanup = st.checkbox(
+                    "启用 OCR 识别与字段清洗",
+                    value=False,
+                    help="用于后续从截图中识别订单编号、物料 ID、报表类型等关键字段，并生成缺失的支持性表格。",
+                    key="enable_ocr_cleanup",
+                )
+                enable_filename_cleanup = st.checkbox(
+                    "启用文件名清洗为标准格式",
+                    value=False,
+                    help="用于后续把非标准命名的截图或表格识别为样本号、订单编号、报表类型，并建议标准文件名。",
+                    key="enable_filename_cleanup",
+                )
+            with config_col:
+                if deepseek_config:
+                    st.success(f"DeepSeek 已配置：{deepseek_config.model}")
+                else:
+                    st.warning("DeepSeek API Key 未配置，清洗功能暂不可用。")
+                    st.caption("在 Streamlit Cloud 的 Secrets 中添加 DEEPSEEK_API_KEY 后即可启用。")
+
+            if (enable_ocr_cleanup or enable_filename_cleanup) and not deepseek_config:
+                st.info("当前会继续执行本地文件识别；DeepSeek 清洗会在配置 API Key 后启用。")
 
             uploaded_files = st.file_uploader(
                 "上传支持文件或 zip 包",

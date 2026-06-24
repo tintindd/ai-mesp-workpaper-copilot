@@ -113,3 +113,23 @@ mesp_automation_result.json
 ## 敏感数据说明
 
 `training_files/`、`mesp_automation_result.json`、`mesp_training_profile.json` 等本地数据文件默认不提交到 GitHub。
+
+## DeepSeek API 配置
+
+数据识别与清洗功能通过 DeepSeek API 做字段标准化、文件名清洗和后续 OCR 文本结构化。API Key 不要写入代码或提交到 GitHub。
+
+在 Streamlit Community Cloud 中进入：
+
+```text
+App settings -> Secrets
+```
+
+添加：
+
+```toml
+DEEPSEEK_API_KEY = "你的 DeepSeek API Key"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_MODEL = "deepseek-chat"
+```
+
+其中 `DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 可以不填，系统会默认使用 DeepSeek 官方 OpenAI-compatible API 地址和 `deepseek-chat` 模型。
