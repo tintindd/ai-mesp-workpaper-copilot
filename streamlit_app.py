@@ -173,10 +173,40 @@ st.markdown(
         font-weight: 800;
         min-height: 2.7rem;
     }
+    .fork-button {
+        position: fixed;
+        top: .45rem;
+        right: .55rem;
+        z-index: 9999;
+        display: inline-flex;
+        align-items: center;
+        gap: .42rem;
+        padding: .45rem .72rem;
+        border: 1px solid rgba(255,255,255,.25);
+        border-radius: .2rem;
+        background: rgba(8, 12, 20, .72);
+        color: #fff !important;
+        font-size: .78rem;
+        font-weight: 800;
+        text-decoration: none !important;
+        line-height: 1;
+        box-shadow: 0 .25rem .75rem rgba(0,0,0,.22);
+        backdrop-filter: blur(6px);
+    }
+    .fork-button:hover {
+        background: rgba(0, 51, 141, .92);
+        border-color: rgba(255,255,255,.45);
+    }
+    .fork-button svg {
+        width: .95rem;
+        height: .95rem;
+        fill: currentColor;
+    }
     @media (max-width: 900px) {
         .mesp-hero { padding: 1.6rem 1.4rem; align-items: flex-start; flex-direction: column; }
         .mesp-shell { width: calc(100vw - 1.5rem); margin-top: 1rem; }
         .program-help { grid-template-columns: 1fr; }
+        .fork-button { top: .35rem; right: .35rem; }
     }
     </style>
     """,
@@ -279,6 +309,12 @@ def render_trace(items: list[dict]) -> None:
 
 st.markdown(
     """
+    <a class="fork-button" href="https://github.com/tintindd/ai-mesp-workpaper-copilot" target="_blank" rel="noopener">
+      <span>Fork</span>
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.2-3.64-.91-3.64-4.03 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.5 7.5 0 0 1 8 3.89c.68 0 1.36.09 2 .27 1.52-1.06 2.19-.84 2.19-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.13-1.87 3.82-3.65 4.03.29.25.54.75.54 1.52 0 1.1-.01 1.99-.01 2.26 0 .22.15.47.55.39A8.08 8.08 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/>
+      </svg>
+    </a>
     <div class="mesp-hero">
       <div>
         <h1>AI-MESP Workpaper Copilot</h1>
