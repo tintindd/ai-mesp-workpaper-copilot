@@ -21,7 +21,12 @@ from deepseek_client import (  # noqa: E402
     normalize_filename_with_deepseek,
     test_deepseek_connection,
 )
-from ocr_client import is_image_file, paddleocr_available, recognize_uploaded_image  # noqa: E402
+from ocr_client import (  # noqa: E402
+    is_image_file,
+    load_online_ocr_config,
+    online_ocr_available,
+    recognize_uploaded_image,
+)
 from spd03015_exporter import build_spd03015_bytes  # noqa: E402
 from supporting_exporter import build_supporting_bytes  # noqa: E402
 
@@ -644,8 +649,8 @@ def run_filename_cleanup(uploaded_files) -> None:
 def run_ocr_cleanup(uploaded_files) -> None:
     st.session_state["ocr_cleanup_results"] = []
     st.session_state.pop("ocr_cleanup_error", None)
-    if not paddleocr_available():
-        st.session_state["ocr_cleanup_error"] = "当前环境未安装 PaddleOCR，无法运行图片 OCR。"
+    if not online_ocr_available(online_ocr_config):
+        st.session_state["ocr_cleanup_error"] = "在线 PaddleOCR 服务未配置，无法运行图片 OCR。"
         return
     if not deepseek_config:
         st.session_state["ocr_cleanup_error"] = "DeepSeek API Key 未配置，无法清洗 OCR 文本。"
@@ -659,7 +664,7 @@ def run_ocr_cleanup(uploaded_files) -> None:
     results = []
     try:
         for uploaded_file in image_files:
-            ocr_result = recognize_uploaded_image(uploaded_file)
+            ocr_result = recognize_uploaded_image(uploaded_file, online_ocr_config)
             cleaned = clean_ocr_text_with_deepseek(
                 uploaded_file.name,
                 ocr_result.get("text") or "",
@@ -679,6 +684,7 @@ def run_ocr_cleanup(uploaded_files) -> None:
 
 
 deepseek_config = load_deepseek_config(st.secrets)
+online_ocr_config = load_online_ocr_config(st.secrets)
 
 
 st.markdown(
@@ -863,10 +869,10 @@ with work_col:
                 else:
                     st.warning("DeepSeek API Key 未配置，清洗功能暂不可用。")
                     st.caption("在 Streamlit Cloud 的 Secrets 中添加 DEEPSEEK_API_KEY 后即可启用。")
-                if paddleocr_available():
-                    st.success("PaddleOCR 已可用")
+                if online_ocr_available(online_ocr_config):
+                    st.success("在线 PaddleOCR 服务已配置")
                 else:
-                    st.warning("PaddleOCR 未安装，OCR 功能暂不可用。")
+                    st.warning("在线 PaddleOCR 服务未配置，OCR 功能暂不可用。")
                 st.button(
                     "测试 DeepSeek 连接",
                     disabled=not deepseek_config,
@@ -928,7 +934,7 @@ with work_col:
                 image_count = len([item for item in uploaded_files or [] if is_image_file(item.name)])
                 st.button(
                     "运行 OCR 识别与清洗",
-                    disabled=not uploaded_files or not deepseek_config or not paddleocr_available(),
+                    disabled=not uploaded_files or not deepseek_config or not online_ocr_available(online_ocr_config),
                     on_click=run_ocr_cleanup,
                     args=(uploaded_files,),
                 )
@@ -950,7 +956,7 @@ with work_col:
                                 "物料ID": (item.get("cleaned") or {}).get("material_id") or "-",
                                 "报表类型": (item.get("cleaned") or {}).get("report_type") or "-",
                                 "建议标准文件名": (item.get("cleaned") or {}).get("standard_filename") or "-",
-                                "来源": "PaddleOCR + DeepSeek",
+                                "来源": "在线 PaddleOCR + DeepSeek",
                             }
                             for item in ocr_results
                         ],

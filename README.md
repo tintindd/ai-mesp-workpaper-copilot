@@ -133,3 +133,23 @@ DEEPSEEK_MODEL = "deepseek-chat"
 ```
 
 其中 `DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 可以不填，系统会默认使用 DeepSeek 官方 OpenAI-compatible API 地址和 `deepseek-chat` 模型。
+
+## 在线 PaddleOCR 服务配置
+
+OCR 识别建议使用在线 PaddleOCR 服务，避免在 Streamlit Cloud 中安装较重的本地 OCR 模型依赖。
+
+在 Streamlit Community Cloud 的 `App settings -> Secrets` 中继续添加：
+
+```toml
+PADDLEOCR_API_URL = "你的在线 PaddleOCR 服务调用地址"
+PADDLEOCR_API_KEY = "你的在线 PaddleOCR Token 或 API Key"
+PADDLEOCR_AUTH_HEADER = "Authorization"
+PADDLEOCR_AUTH_SCHEME = "Bearer"
+PADDLEOCR_FILE_FIELD = "file"
+```
+
+如果平台要求的鉴权头不是 `Authorization: Bearer xxx`，可以按平台文档调整：
+
+- `PADDLEOCR_AUTH_HEADER`：例如 `Authorization`、`X-API-Key`
+- `PADDLEOCR_AUTH_SCHEME`：例如 `Bearer`；如果平台只要求原始 token，可留空
+- `PADDLEOCR_FILE_FIELD`：图片上传字段名，默认 `file`
