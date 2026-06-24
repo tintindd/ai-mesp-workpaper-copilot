@@ -90,9 +90,17 @@ def classify_filename_with_deepseek(filename: str, config: DeepSeekConfig) -> st
             {
                 "role": "system",
                 "content": (
-                    "You are helping normalize SAP audit evidence filenames. "
-                    "Return concise JSON only. Extract sample_no, order_id, material_id, "
-                    "report_type among CO03, KSBT, 3611, CKM3, and suggest a standard filename."
+                    "You normalize SAP audit evidence filenames for AI-MESP. "
+                    "Return strict JSON only, no markdown. Extract sample_no, order_id, "
+                    "material_id, report_type, evidence_kind, extension, confidence, and "
+                    "standard_filename. report_type must be one of CO03, KSBT, 3611, CKM3. "
+                    "evidence_kind must be one of 表格, 截图, 清单, 未知. "
+                    "sample_no must be a single number when possible, not a path. "
+                    "Use this standard filename pattern: "
+                    "样本{sample_no}/{sample_no}.订单编号{order_id}-{report_type}-{evidence_kind}.{extension}. "
+                    "For CKM3 with material_id, use: "
+                    "样本{sample_no}/{sample_no}.订单编号{order_id}-物料ID-{material_id}-CKM3-{evidence_kind}.{extension}. "
+                    "If a field is unknown, use null and still provide the best standard_filename."
                 ),
             },
             {"role": "user", "content": filename},
@@ -100,4 +108,103 @@ def classify_filename_with_deepseek(filename: str, config: DeepSeekConfig) -> st
         config,
         temperature=0,
         max_tokens=500,
+    )
+
+
+def parse_deepseek_json(content: str) -> dict[str, Any]:
+    text = content.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end >= start:
+        text = text[start : end + 1]
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("DeepSeek JSON response is not an object.")
+    return data
+
+
+def normalize_filename_with_deepseek(filename: str, config: DeepSeekConfig) -> dict[str, Any]:
+    content = classify_filename_with_deepseek(filename, config)
+    data = parse_deepseek_json(content)
+    extension = data.get("extension")
+    if not extension and "." in filename:
+        extension = filename.rsplit(".", 1)[-1].lower()
+    evidence_kind = data.get("evidence_kind") or _infer_evidence_kind(filename, extension)
+    if evidence_kind == "未知":
+        evidence_kind = _infer_evidence_kind(filename, extension)
+    sample_no = data.get("sample_no")
+    order_id = data.get("order_id")
+    material_id = data.get("material_id")
+    report_type = data.get("report_type")
+    standard_filename = _build_standard_filename(
+        sample_no=sample_no,
+        order_id=order_id,
+        material_id=material_id,
+        report_type=report_type,
+        evidence_kind=evidence_kind,
+        extension=extension,
+    )
+    return {
+        "source_file": filename,
+        "sample_no": sample_no,
+        "order_id": order_id,
+        "material_id": material_id,
+        "report_type": report_type,
+        "evidence_kind": evidence_kind,
+        "extension": extension,
+        "standard_filename": standard_filename or data.get("standard_filename") or data.get("suggested_filename"),
+        "confidence": data.get("confidence"),
+        "raw_response": data,
+    }
+
+
+def _infer_evidence_kind(filename: str, extension: str | None) -> str:
+    lowered = filename.lower()
+    if "截图" in filename or extension in {"png", "jpg", "jpeg", "webp", "gif"}:
+        return "截图"
+    if "清单" in filename:
+        return "清单"
+    if "表格" in filename or extension in {"xlsx", "xlsm", "xls", "csv"}:
+        return "表格"
+    return "未知"
+
+
+def _build_standard_filename(
+    *,
+    sample_no: Any,
+    order_id: Any,
+    material_id: Any,
+    report_type: Any,
+    evidence_kind: str,
+    extension: str | None,
+) -> str | None:
+    if not sample_no or not order_id or not report_type or not extension:
+        return None
+    sample_text = str(sample_no)
+    report_text = str(report_type).upper()
+    extension_text = str(extension).lstrip(".")
+    if report_text == "CKM3" and material_id:
+        return (
+            f"样本{sample_text}/{sample_text}.订单编号{order_id}-"
+            f"物料ID-{material_id}-CKM3-{evidence_kind}.{extension_text}"
+        )
+    return f"样本{sample_text}/{sample_text}.订单编号{order_id}-{report_text}-{evidence_kind}.{extension_text}"
+
+
+def test_deepseek_connection(config: DeepSeekConfig) -> str:
+    return deepseek_chat(
+        [
+            {"role": "system", "content": "Return exactly: ok"},
+            {"role": "user", "content": "connection test"},
+        ],
+        config,
+        temperature=0,
+        max_tokens=20,
     )

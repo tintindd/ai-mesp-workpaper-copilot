@@ -15,7 +15,11 @@ if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
 from mesp_automation_engine import analyze_folder  # noqa: E402
-from deepseek_client import load_deepseek_config  # noqa: E402
+from deepseek_client import (  # noqa: E402
+    load_deepseek_config,
+    normalize_filename_with_deepseek,
+    test_deepseek_connection,
+)
 from spd03015_exporter import build_spd03015_bytes  # noqa: E402
 from supporting_exporter import build_supporting_bytes  # noqa: E402
 
@@ -599,6 +603,42 @@ def step_class(step: int, active_step: int) -> str:
     return "step-item active" if step == active_step else "step-item"
 
 
+def run_deepseek_connection_test() -> None:
+    if not deepseek_config:
+        st.session_state["deepseek_status"] = {
+            "ok": False,
+            "message": "DeepSeek API Key 未配置。",
+        }
+        return
+    try:
+        response = test_deepseek_connection(deepseek_config)
+        st.session_state["deepseek_status"] = {
+            "ok": True,
+            "message": f"连接成功：{response.strip()}",
+        }
+    except Exception as exc:
+        st.session_state["deepseek_status"] = {
+            "ok": False,
+            "message": str(exc),
+        }
+
+
+def run_filename_cleanup(uploaded_files) -> None:
+    if not deepseek_config:
+        st.session_state["filename_cleanup_results"] = []
+        st.session_state["filename_cleanup_error"] = "DeepSeek API Key 未配置。"
+        return
+
+    results = []
+    try:
+        for uploaded_file in uploaded_files or []:
+            results.append(normalize_filename_with_deepseek(uploaded_file.name, deepseek_config))
+        st.session_state["filename_cleanup_results"] = results
+        st.session_state.pop("filename_cleanup_error", None)
+    except Exception as exc:
+        st.session_state["filename_cleanup_error"] = str(exc)
+
+
 deepseek_config = load_deepseek_config(st.secrets)
 
 
@@ -784,6 +824,17 @@ with work_col:
                 else:
                     st.warning("DeepSeek API Key 未配置，清洗功能暂不可用。")
                     st.caption("在 Streamlit Cloud 的 Secrets 中添加 DEEPSEEK_API_KEY 后即可启用。")
+                st.button(
+                    "测试 DeepSeek 连接",
+                    disabled=not deepseek_config,
+                    on_click=run_deepseek_connection_test,
+                )
+                deepseek_status = st.session_state.get("deepseek_status")
+                if deepseek_status:
+                    if deepseek_status.get("ok"):
+                        st.caption(deepseek_status.get("message"))
+                    else:
+                        st.error(deepseek_status.get("message"))
 
             if (enable_ocr_cleanup or enable_filename_cleanup) and not deepseek_config:
                 st.info("当前会继续执行本地文件识别；DeepSeek 清洗会在配置 API Key 后启用。")
@@ -798,6 +849,40 @@ with work_col:
             if uploaded_files:
                 st.session_state["has_uploaded_files"] = True
                 st.write(f"已选择 {len(uploaded_files)} 个文件。")
+
+            if enable_filename_cleanup:
+                cleanup_disabled = not uploaded_files or not deepseek_config
+                st.button(
+                    "运行文件名清洗",
+                    disabled=cleanup_disabled,
+                    on_click=run_filename_cleanup,
+                    args=(uploaded_files,),
+                )
+                cleanup_error = st.session_state.get("filename_cleanup_error")
+                cleanup_results = st.session_state.get("filename_cleanup_results") or []
+                if cleanup_error:
+                    st.error(cleanup_error)
+                if cleanup_results:
+                    st.dataframe(
+                        [
+                            {
+                                "原始文件": item.get("source_file"),
+                                "样本号": item.get("sample_no") or "-",
+                                "订单编号": item.get("order_id") or "-",
+                                "物料ID": item.get("material_id") or "-",
+                                "报表类型": item.get("report_type") or "-",
+                                "建议标准文件名": item.get("standard_filename") or "-",
+                                "置信度": item.get("confidence") or "-",
+                                "来源": "DeepSeek 文件名清洗",
+                            }
+                            for item in cleanup_results
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            if enable_ocr_cleanup:
+                st.info("OCR 识别入口已预留。下一步接入 PaddleOCR 后，会先从截图抽取文字/表格，再交给 DeepSeek 做字段清洗。")
 
             analyze_clicked = st.button("Analyze", type="primary", disabled=not uploaded_files)
 
