@@ -156,16 +156,12 @@ def _extract_ckm3_amounts(path: Path | None) -> dict[str, float]:
     return _extract_ckm3_amounts_from_rows(_load_first_sheet_rows(path))
 
 
-def _parse_report_sheet_name(sheet_name: str) -> tuple[int | None, str | None, str, str]:
+def _parse_report_sheet_name(sheet_name: str) -> tuple[int | None, str | None, str]:
     sample = find_sample(Path(sheet_name))
     report = find_report(sheet_name)
     order_match = re.search(r"订单编号\s*([A-Za-z0-9]+)", sheet_name, flags=re.IGNORECASE)
     order = order_match.group(1) if order_match else (find_order(Path(sheet_name)) or "")
-    material_id = _material_id_from_name(sheet_name)
-    if not material_id:
-        short_match = re.search(r"CKM3[-_\s]*([A-Za-z0-9]+)", sheet_name, flags=re.IGNORECASE)
-        material_id = short_match.group(1) if short_match else ""
-    return sample, report, order, material_id
+    return sample, report, order
 
 
 def _iter_candidate_workbooks(source_folder: Path) -> list[Path]:
@@ -270,14 +266,12 @@ def _discover_samples(source_folder: Path) -> list[Spd03015Sample]:
         except Exception:
             continue
         for sheet_name in workbook.sheetnames:
-            sample, report, order, material_id = _parse_report_sheet_name(sheet_name)
+            sample, report, order = _parse_report_sheet_name(sheet_name)
             if not sample or report not in {"CO03", "KSBT", "3611", "CKM3"}:
                 continue
             info = by_sample.setdefault(sample, {"sample": sample, "order": "", "material_id": "", "ckm3_path": None})
             if order and not info["order"]:
                 info["order"] = order
-            if material_id and not info["material_id"]:
-                info["material_id"] = material_id
             if report == "CKM3" and not info.get("ckm3_rows"):
                 info["ckm3_rows"] = list(workbook[sheet_name].iter_rows(values_only=True))
         workbook.close()

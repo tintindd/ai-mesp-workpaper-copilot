@@ -209,14 +209,9 @@ def _write_placeholder(sheet, title: str, source_path: Path) -> None:
 
 
 def _create_table_sheet(workbook: Workbook, item: dict[str, Any], order: str) -> str:
-    material_match = re.search(r"物料ID[-_\s]*([A-Za-z0-9]+)", item["path"].name, flags=re.IGNORECASE)
-    if item.get("report") == "CKM3" and material_match:
-        base_name = f"样本{item['sample']}.订单编号{order or '未识别'}-CKM3-{material_match.group(1)}"
-    else:
-        base_name = f"样本{item['sample']}.订单编号{order or '未识别'}-{item['report']}"
     name = _unique_sheet_name(
         workbook,
-        base_name,
+        f"样本{item['sample']}.订单编号{order or '未识别'}-{item['report']}",
     )
     sheet = workbook.create_sheet(name)
     sheet.sheet_view.showGridLines = False
