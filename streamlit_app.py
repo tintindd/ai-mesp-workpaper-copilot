@@ -642,6 +642,21 @@ def go_next_from_scenario() -> None:
     st.session_state["current_step"] = 2
 
 
+PROGRAM_OPTIONS = {
+    "SPD03012 - 标准成本法固定加工成本": "SPD03012",
+    "SPD03014 - 标准成本法可变加工成本": "SPD03014",
+    "SPD03015 - 存货成本差异分摊": "SPD03015",
+}
+
+
+def sync_test_program_from_label() -> None:
+    st.session_state["test_program"] = PROGRAM_OPTIONS.get(
+        st.session_state.get("test_program_label"),
+        "SPD03012",
+    )
+    mark_scenario_started()
+
+
 def go_next_from_params() -> None:
     st.session_state["scenario_started"] = True
     st.session_state["params_confirmed"] = True
@@ -1258,13 +1273,21 @@ with work_col:
                 unsafe_allow_html=True,
             )
 
-            st.radio(
+            current_program = st.session_state.get("test_program", "SPD03012")
+            default_label = next(
+                (label for label, code in PROGRAM_OPTIONS.items() if code == current_program),
+                "SPD03012 - 标准成本法固定加工成本",
+            )
+            st.selectbox(
                 "测试程序",
-                ["SPD03012", "SPD03014", "SPD03015"],
-                horizontal=True,
-                label_visibility="collapsed",
-                key="test_program",
-                on_change=mark_scenario_started,
+                list(PROGRAM_OPTIONS),
+                index=list(PROGRAM_OPTIONS).index(default_label),
+                key="test_program_label",
+                on_change=sync_test_program_from_label,
+            )
+            st.session_state["test_program"] = PROGRAM_OPTIONS.get(
+                st.session_state.get("test_program_label"),
+                current_program,
             )
 
             st.button("下一步", type="primary", on_click=go_next_from_scenario)
@@ -1332,6 +1355,7 @@ with work_col:
                 """,
                 unsafe_allow_html=True,
             )
+            st.info(f"当前选择的测试程序：{st.session_state.get('test_program', 'SPD03012')}")
 
             tab_ocr, tab_cleanup, tab_upload = st.tabs(["OCR", "文件名清洗", "计算结果"])
 
@@ -1616,6 +1640,7 @@ with work_col:
                 if summary.get("sample_count", 0) == 0 or summary.get("recognized_file_count", 0) == 0:
                     st.warning("未识别到有效样本，暂不生成底稿结果。请先根据异常提示修正上传文件命名或内容。")
                 else:
+                    st.info(f"本次生成的测试程序：{selected_program}")
                     st.download_button(
                         "下载 SPP Supporting Excel",
                         data=supporting_bytes,
