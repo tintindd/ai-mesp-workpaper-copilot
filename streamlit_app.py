@@ -7,7 +7,7 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 import streamlit as st
 
@@ -501,6 +501,60 @@ def save_uploaded_files(uploaded_files, target_dir: Path) -> int:
         destination.write_bytes(uploaded_file.getbuffer())
         saved += 1
     return saved
+
+
+def extract_zip_bytes(zip_bytes: bytes, target_dir: Path) -> int:
+    saved = 0
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        for member in archive.infolist():
+            if member.is_dir():
+                continue
+            member_path = Path(member.filename)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                continue
+            destination = target_dir / member_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(member) as source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output)
+            saved += 1
+    return saved
+
+
+def build_analysis_bundle_from_folder(source_dir: Path, period: str, program: str) -> dict:
+    result = analyze_folder(source_dir, period=period, program=program)
+    supporting_bytes = build_supporting_bytes(result, source_dir)
+    spp_dir = source_dir / "_generated_spp"
+    spp_dir.mkdir(parents=True, exist_ok=True)
+    (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
+    summary = result.get("summary", {})
+    selected_spd_bytes = (
+        build_spd03015_bytes(spp_dir, program=program, period=period)
+        if summary.get("sample_count", 0) > 0 and summary.get("recognized_file_count", 0) > 0
+        else b""
+    )
+    return {
+        "result": result,
+        "program": program,
+        "supporting_bytes": supporting_bytes,
+        "selected_spd_bytes": selected_spd_bytes,
+    }
+
+
+def run_analysis_from_cleaned_zip(zip_bytes: bytes | None, period: str, program: str) -> None:
+    if not zip_bytes:
+        st.session_state["filename_cleanup_error"] = "请先运行文件名清洗并生成标准命名文件包。"
+        return
+    try:
+        with tempfile.TemporaryDirectory(prefix="mesp_cleaned_zip_") as temp:
+            temp_dir = Path(temp)
+            saved_count = extract_zip_bytes(zip_bytes, temp_dir)
+            if saved_count == 0:
+                st.session_state["filename_cleanup_error"] = "标准命名文件包为空，无法计算。"
+                return
+            st.session_state["analysis_bundle"] = build_analysis_bundle_from_folder(temp_dir, period, program)
+            st.session_state["current_step"] = 4
+    except Exception as exc:
+        st.session_state["filename_cleanup_error"] = str(exc)
 
 
 def render_issues(issues: list[dict]) -> None:
@@ -1023,6 +1077,52 @@ def build_filename_cleanup_excel_bytes(cleanup_results: list[dict]) -> bytes:
     return output.getvalue()
 
 
+def _excel_preview_rows(file_bytes: bytes, max_rows: int = 30) -> list[dict]:
+    workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+    sheet = workbook[workbook.sheetnames[0]]
+    rows = []
+    for row_index, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+        values = list(row)
+        if not any(value not in (None, "") for value in values):
+            continue
+        rows.append({f"列{index + 1}": value for index, value in enumerate(values)})
+        if len(rows) >= max_rows:
+            break
+    workbook.close()
+    return rows
+
+
+def render_cleanup_file_preview(item: dict) -> None:
+    file_name = item.get("standard_filename") or item.get("source_file") or "文件预览"
+    file_bytes = item.get("file_bytes") or b""
+    suffix = Path(str(file_name)).suffix.lower()
+    st.caption(item.get("source_file") or "")
+    if suffix in {".png", ".jpg", ".jpeg"}:
+        st.image(file_bytes, caption=file_name, use_container_width=True)
+    elif suffix in {".xlsx", ".xlsm"}:
+        rows = _excel_preview_rows(file_bytes)
+        if rows:
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+        else:
+            st.info("该 Excel 文件未读取到可预览数据。")
+    elif suffix == ".csv":
+        text = file_bytes.decode("utf-8-sig", errors="replace")
+        st.text("\n".join(text.splitlines()[:40]))
+    elif suffix == ".pdf":
+        st.info("PDF 文件暂不支持在线预览，请下载标准命名文件包后查看。")
+    else:
+        st.info("该文件类型暂不支持在线预览。")
+
+
+if hasattr(st, "dialog"):
+    @st.dialog("文件预览")
+    def show_cleanup_preview_dialog(item: dict) -> None:
+        render_cleanup_file_preview(item)
+        if st.button("关闭预览"):
+            st.session_state.pop("cleanup_preview_index", None)
+            st.rerun()
+
+
 def _write_header(sheet, headers: list[str]) -> None:
     fill = PatternFill("solid", fgColor="00338D")
     font = Font(color="FFFFFF", bold=True)
@@ -1227,7 +1327,7 @@ with work_col:
                 """
                 <div class="upload-rules">
                   <strong>推荐处理顺序</strong><br>
-                  1. 若缺少 CKM3 Excel，先在 <code>CKM3 OCR</code> 中把截图转成表格。<br>
+                  1. 若缺少 CKM3 Excel，先在 <code>OCR</code> 中把截图转成表格。<br>
                   2. 若文件命名不规范，在 <code>文件名清洗</code> 中导出标准命名 ZIP。<br>
                   3. 将最终标准文件或 zip 包上传到 <code>最终上传分析</code>，生成 SPP 和底稿结果。
                 </div>
@@ -1235,7 +1335,7 @@ with work_col:
                 unsafe_allow_html=True,
             )
 
-            tab_ocr, tab_cleanup, tab_upload = st.tabs(["CKM3 OCR", "文件名清洗", "最终上传分析"])
+            tab_ocr, tab_cleanup, tab_upload = st.tabs(["OCR", "文件名清洗", "最终上传分析"])
 
             with tab_ocr:
                 ocr_col, config_col = st.columns([1.25, 1])
@@ -1245,7 +1345,7 @@ with work_col:
                     if online_ocr_available(online_ocr_config):
                         st.success("在线 PaddleOCR 服务已配置")
                     else:
-                        st.warning("在线 PaddleOCR 服务未配置，CKM3 OCR 暂不可用。")
+                        st.warning("在线 PaddleOCR 服务未配置，OCR 暂不可用。")
 
                 ckm3_ocr_files = st.file_uploader(
                     "上传 CKM3 截图（PNG/JPG/JPEG/PDF）",
@@ -1283,13 +1383,13 @@ with work_col:
                     for index, item in enumerate(ckm3_ocr_excels, start=1):
                         if item.get("bytes"):
                             st.download_button(
-                                f"下载 CKM3 OCR 生成 Excel #{index}",
+                                f"下载 OCR 生成 Excel #{index}",
                                 data=item["bytes"],
                                 file_name=Path(item.get("file_name") or f"ckm3_ocr_{index}.xlsx").name,
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 type="secondary",
                             )
-                    with st.expander("查看 CKM3 OCR 原文"):
+                    with st.expander("查看 OCR 原文"):
                         for item in ckm3_ocr_excels:
                             st.markdown(f"**{item.get('source_file')}**")
                             st.text(item.get("ocr_text") or "")
@@ -1392,6 +1492,33 @@ with work_col:
                         for item in cleanup_results
                     ]
                     st.dataframe(cleanup_table_rows, use_container_width=True, hide_index=True)
+
+                    st.markdown("#### 标准文件名预览")
+                    st.caption("点击标准文件名可预览文件内容。图片会直接展示，Excel 会展示首个 Sheet 的前 30 行。")
+                    for index, item in enumerate(cleanup_results):
+                        row_cols = st.columns([1.1, 3.2, 1.2, 1])
+                        row_cols[0].write(item.get("上传位置") or "-")
+                        row_cols[1].button(
+                            item.get("standard_filename") or item.get("source_file") or f"文件 {index + 1}",
+                            key=f"preview_cleanup_{index}",
+                            use_container_width=True,
+                            on_click=lambda i=index: st.session_state.update({"cleanup_preview_index": i}),
+                        )
+                        row_cols[2].write(item.get("evidence_kind") or "-")
+                        row_cols[3].write(item.get("field_status") or "-")
+
+                    preview_index = st.session_state.get("cleanup_preview_index")
+                    if preview_index is not None and preview_index < len(cleanup_results):
+                        preview_item = cleanup_results[preview_index]
+                        if hasattr(st, "dialog"):
+                            show_cleanup_preview_dialog(preview_item)
+                        else:
+                            with st.expander("文件预览", expanded=True):
+                                if st.button("关闭预览"):
+                                    st.session_state.pop("cleanup_preview_index", None)
+                                    st.rerun()
+                                render_cleanup_file_preview(preview_item)
+
                     standard_zip_bytes = st.session_state.get("standard_named_zip_bytes")
                     if standard_zip_bytes:
                         st.download_button(
@@ -1400,6 +1527,24 @@ with work_col:
                             file_name=f"样本{cleanup_sample_no or '1'}_标准命名文件包.zip",
                             mime="application/zip",
                             type="primary",
+                        )
+                    calculate_choice = st.radio(
+                        "是否进行计算",
+                        ["否", "是"],
+                        horizontal=True,
+                        key="calculate_after_cleanup",
+                    )
+                    if calculate_choice == "是":
+                        st.button(
+                            "使用清洗后的标准文件直接计算",
+                            disabled=not standard_zip_bytes,
+                            type="primary",
+                            on_click=run_analysis_from_cleaned_zip,
+                            args=(
+                                standard_zip_bytes,
+                                st.session_state.get("audit_period", "2025.01.01-2025.12.31"),
+                                st.session_state.get("test_program", "SPD03012"),
+                            ),
                         )
                     st.download_button(
                         "下载标准文件名清洗清单 Excel",
@@ -1434,24 +1579,7 @@ with work_col:
                     st.stop()
 
                 with st.spinner("正在识别 SAP 支持文件并生成复核结果..."):
-                    result = analyze_folder(temp_dir, period=period, program=program)
-                    supporting_bytes = build_supporting_bytes(result, temp_dir)
-                    spp_dir = temp_dir / "_generated_spp"
-                    spp_dir.mkdir(parents=True, exist_ok=True)
-                    (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
-                    summary = result.get("summary", {})
-                    selected_spd_bytes = (
-                        build_spd03015_bytes(spp_dir, program=program, period=period)
-                        if summary.get("sample_count", 0) > 0 and summary.get("recognized_file_count", 0) > 0
-                        else b""
-                    )
-
-            st.session_state["analysis_bundle"] = {
-                "result": result,
-                "program": program,
-                "supporting_bytes": supporting_bytes,
-                "selected_spd_bytes": selected_spd_bytes,
-            }
+                    st.session_state["analysis_bundle"] = build_analysis_bundle_from_folder(temp_dir, period, program)
             st.session_state["current_step"] = 4
             st.rerun()
 
