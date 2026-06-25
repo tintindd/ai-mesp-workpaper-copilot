@@ -208,6 +208,11 @@ def _write_placeholder(sheet, title: str, source_path: Path) -> None:
     _auto_width(sheet)
 
 
+def _material_id_from_name(name: str) -> str:
+    match = re.search(r"物料ID[-_\s]*([A-Za-z0-9]+)", name, flags=re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
 def _create_table_sheet(workbook: Workbook, item: dict[str, Any], order: str) -> str:
     name = _unique_sheet_name(
         workbook,
@@ -239,6 +244,7 @@ def _build_directory_sheet(
     sheet,
     samples: list[int],
     orders: dict[int, str],
+    material_ids: dict[int, str],
     table_links: dict[tuple[int, str], str],
     image_counts: dict[tuple[int, str], int],
     image_links: dict[tuple[int, str], str],
@@ -248,9 +254,9 @@ def _build_directory_sheet(
     sheet.freeze_panes = "A4"
     sheet["A1"] = "SPP Supporting Package 目录"
     _style_title(sheet["A1"])
-    sheet.merge_cells("A1:J1")
+    sheet.merge_cells("A1:K1")
 
-    headers = ["样本", "订单编号"]
+    headers = ["样本", "订单编号", "物料ID"]
     for report in REPORTS:
         headers.extend([f"{report}-截图", f"{report}-表格"])
     for col, header in enumerate(headers, 1):
@@ -261,7 +267,8 @@ def _build_directory_sheet(
         order = orders.get(sample, "")
         sheet.cell(row_index, 1, f"样本{sample}")
         sheet.cell(row_index, 2, order or "未识别")
-        col = 3
+        sheet.cell(row_index, 3, material_ids.get(sample, ""))
+        col = 4
         for report in REPORTS:
             count = image_counts.get((sample, report), 0)
             if count:
@@ -368,6 +375,12 @@ def build_supporting_workbook(result: dict, source_folder: Path) -> Workbook:
     )
     samples = sorted({item["sample"] for item in items})
     orders = _sample_orders(items)
+    material_ids: dict[int, str] = {}
+    for item in items:
+        if item["report"] == "CKM3":
+            material_id = _material_id_from_name(item["path"].name)
+            if material_id and not material_ids.get(item["sample"]):
+                material_ids[item["sample"]] = material_id
 
     workbook = Workbook()
     directory = workbook.active
@@ -386,7 +399,7 @@ def build_supporting_workbook(result: dict, source_folder: Path) -> Workbook:
         image_counts[(item["sample"], item["report"])] += 1
 
     image_links = _build_image_sheet(image_sheet, samples, orders, image_items)
-    _build_directory_sheet(directory, samples, orders, table_links, image_counts, image_links)
+    _build_directory_sheet(directory, samples, orders, material_ids, table_links, image_counts, image_links)
 
     workbook.properties.title = "SPP Supporting Package"
     workbook.properties.subject = result.get("program") or ""

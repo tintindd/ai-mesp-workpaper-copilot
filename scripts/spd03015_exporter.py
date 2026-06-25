@@ -232,6 +232,39 @@ def _spp_has_screenshot(source_folder: Path, sample: int, report: str) -> bool:
     return False
 
 
+def _spp_material_ids(source_folder: Path) -> dict[int, str]:
+    material_ids: dict[int, str] = {}
+    for workbook_path in _iter_candidate_workbooks(source_folder):
+        try:
+            workbook = load_workbook(workbook_path, data_only=True, read_only=True)
+        except Exception:
+            continue
+        if "SPP目录" not in workbook.sheetnames:
+            workbook.close()
+            continue
+
+        sheet = workbook["SPP目录"]
+        rows = list(sheet.iter_rows(values_only=True))
+        workbook.close()
+        if len(rows) < 4:
+            continue
+
+        headers = [_norm(value) for value in rows[2]]
+        try:
+            sample_col = headers.index("样本")
+            material_col = headers.index("物料ID")
+        except ValueError:
+            continue
+
+        for row in rows[3:]:
+            sample_text = _norm(row[sample_col] if sample_col < len(row) else "")
+            sample = find_sample(Path(sample_text))
+            material_id = _norm(row[material_col] if material_col < len(row) else "")
+            if sample and material_id and material_id not in {"未识别", "缺失", "-"}:
+                material_ids.setdefault(sample, material_id)
+    return material_ids
+
+
 def _load_report_rows(source_folder: Path, sample: int, report: str) -> list[tuple[Any, ...]]:
     report_path = _find_report_file(source_folder, sample, report)
     if report_path:
@@ -241,6 +274,7 @@ def _load_report_rows(source_folder: Path, sample: int, report: str) -> list[tup
 
 def _discover_samples(source_folder: Path) -> list[Spd03015Sample]:
     by_sample: dict[int, dict[str, Any]] = {}
+    spp_material_ids = _spp_material_ids(source_folder)
 
     for path in sorted(source_folder.rglob("*")):
         if not path.is_file() or path.name.startswith("~$"):
@@ -272,6 +306,8 @@ def _discover_samples(source_folder: Path) -> list[Spd03015Sample]:
             info = by_sample.setdefault(sample, {"sample": sample, "order": "", "material_id": "", "ckm3_path": None})
             if order and not info["order"]:
                 info["order"] = order
+            if spp_material_ids.get(sample) and not info["material_id"]:
+                info["material_id"] = spp_material_ids[sample]
             if report == "CKM3" and not info.get("ckm3_rows"):
                 info["ckm3_rows"] = list(workbook[sheet_name].iter_rows(values_only=True))
         workbook.close()
