@@ -21,7 +21,6 @@ if str(SCRIPTS_ROOT) not in sys.path:
 from mesp_automation_engine import REQUIRED_FIELDS, analyze_folder, analyze_workbook  # noqa: E402
 from deepseek_client import (  # noqa: E402
     clean_ocr_text_with_deepseek,
-    extract_order_id_with_deepseek,
     load_deepseek_config,
     normalize_filename_with_deepseek,
     test_deepseek_connection,
@@ -743,54 +742,6 @@ def _standard_cleanup_filename(
     return f"样本{sample_text}/{sample_text}.订单编号{order_text}-{report}-{evidence_kind}.{extension_text}"
 
 
-def extract_order_id_from_ocr_text(text: str) -> str:
-    normalized = re.sub(r"\s+", " ", text or "")
-    patterns = [
-        r"(?:订单编号|订单)\D{0,30}(\d{6,12})",
-        r"\b(1\d{7})\b",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, normalized)
-        if match:
-            return match.group(1)
-    return ""
-
-
-def recognize_order_id_from_co03_files(files: list) -> dict:
-    image_files = [item for item in files or [] if is_image_file(item.name)]
-    if not image_files:
-        return {"order_id": "", "source_file": "", "ocr_text": "", "status": "未上传 CO03 截图"}
-    if not online_ocr_available(online_ocr_config):
-        return {"order_id": "", "source_file": image_files[0].name, "ocr_text": "", "status": "OCR 服务未配置"}
-
-    for uploaded_file in image_files:
-        ocr_result = recognize_uploaded_image(uploaded_file, online_ocr_config)
-        ocr_text = ocr_result.get("text") or ""
-        deepseek_result = {}
-        if deepseek_config:
-            try:
-                deepseek_result = extract_order_id_with_deepseek(uploaded_file.name, ocr_text, deepseek_config)
-            except Exception as exc:
-                deepseek_result = {"notes": f"DeepSeek 清洗失败，已使用规则兜底：{exc}"}
-        order_id = (deepseek_result.get("order_id") or "").strip() or extract_order_id_from_ocr_text(ocr_text)
-        if order_id:
-            return {
-                "order_id": order_id,
-                "source_file": uploaded_file.name,
-                "ocr_text": ocr_text,
-                "status": "DeepSeek 清洗识别" if deepseek_result.get("order_id") else "规则兜底识别",
-                "confidence": deepseek_result.get("confidence"),
-                "evidence": deepseek_result.get("evidence"),
-                "notes": deepseek_result.get("notes"),
-            }
-    return {
-        "order_id": "",
-        "source_file": image_files[0].name,
-        "ocr_text": ocr_text if image_files else "",
-        "status": "未识别到订单编号",
-    }
-
-
 def _deduplicate_zip_name(name: str, used_names: set[str]) -> str:
     if name not in used_names:
         used_names.add(name)
@@ -825,20 +776,16 @@ def build_standard_named_zip_bytes(cleanup_results: list[dict]) -> bytes:
 
 def run_filename_cleanup_by_bucket(
     sample_no: str,
+    order_id: str,
     material_id: str,
     bucket_files: dict[str, list],
 ) -> None:
     st.session_state["filename_cleanup_results"] = []
     st.session_state.pop("standard_named_zip_bytes", None)
     st.session_state.pop("filename_cleanup_error", None)
-    st.session_state.pop("co03_order_ocr_result", None)
 
     results = []
     try:
-        order_ocr_result = recognize_order_id_from_co03_files(bucket_files.get("CO03") or [])
-        st.session_state["co03_order_ocr_result"] = order_ocr_result
-        order_id = order_ocr_result.get("order_id") or ""
-
         with tempfile.TemporaryDirectory(prefix="mesp_filename_check_") as temp:
             temp_dir = Path(temp)
             for report, files in bucket_files.items():
@@ -854,7 +801,7 @@ def run_filename_cleanup_by_bucket(
                     cleaned["上传位置"] = report
                     cleaned["sample_no"] = str(sample_no or cleaned.get("sample_no") or "1").strip()
                     cleaned["report_type"] = report
-                    cleaned["order_id"] = order_id or cleaned.get("order_id") or "待识别"
+                    cleaned["order_id"] = order_id.strip() if order_id.strip() else cleaned.get("order_id") or "待补充"
                     if report == "CKM3":
                         cleaned["material_id"] = str(material_id or cleaned.get("material_id") or "待补充").strip()
                     cleaned["evidence_kind"] = evidence_kind
@@ -1466,13 +1413,19 @@ with work_col:
                         else:
                             st.error(deepseek_status.get("message"))
 
-                sample_col, material_col = st.columns(2)
+                sample_col, order_col, material_col = st.columns(3)
                 with sample_col:
                     cleanup_sample_no = st.text_input(
                         "样本编号",
                         value="1",
                         key="cleanup_sample_no",
                         placeholder="例如 1",
+                    )
+                with order_col:
+                    cleanup_order_id = st.text_input(
+                        "订单编号",
+                        key="cleanup_order_id",
+                        placeholder="例如 11000437",
                     )
                 with material_col:
                     cleanup_material_id = st.text_input(
@@ -1490,7 +1443,6 @@ with work_col:
                       <code>样本1/1.订单编号11000437-3611-截图.png</code>、
                       <code>样本1/1.订单编号11000437-物料ID-13014012-CKM3-截图.png</code>。
                       若 CO03、KSBT、3611、CKM3 都上传截图和 Excel，将导出 4×2 个标准命名文件。
-                      订单编号会从 CO03 截图中通过 OCR 自动识别，并显示在清洗结果中。
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -1513,33 +1465,12 @@ with work_col:
                     disabled=total_cleanup_files == 0,
                     type="primary",
                     on_click=run_filename_cleanup_by_bucket,
-                    args=(cleanup_sample_no, cleanup_material_id, bucket_files),
+                    args=(cleanup_sample_no, cleanup_order_id, cleanup_material_id, bucket_files),
                 )
 
                 cleanup_error = st.session_state.get("filename_cleanup_error")
                 if cleanup_error:
                     st.error(cleanup_error)
-
-                order_ocr_result = st.session_state.get("co03_order_ocr_result")
-                if order_ocr_result:
-                    recognized_order = order_ocr_result.get("order_id") or "未识别"
-                    method_text = order_ocr_result.get("status") or "-"
-                    confidence_text = order_ocr_result.get("confidence")
-                    confidence_part = f"，置信度：{confidence_text}" if confidence_text not in (None, "") else ""
-                    if order_ocr_result.get("order_id"):
-                        st.success(
-                            f"CO03 截图识别出的订单编号：{recognized_order}（方式：{method_text}{confidence_part}；来源：{order_ocr_result.get('source_file') or '-'}）"
-                        )
-                    else:
-                        st.warning(
-                            f"CO03 截图订单编号：{recognized_order}（{order_ocr_result.get('status') or '未识别'}）"
-                        )
-                    if order_ocr_result.get("evidence") or order_ocr_result.get("notes"):
-                        st.caption(
-                            f"识别依据：{order_ocr_result.get('evidence') or '-'}；备注：{order_ocr_result.get('notes') or '-'}"
-                        )
-                    with st.expander("查看 CO03 OCR 原文"):
-                        st.text(order_ocr_result.get("ocr_text") or "")
 
                 cleanup_results = st.session_state.get("filename_cleanup_results") or []
                 if cleanup_results:
