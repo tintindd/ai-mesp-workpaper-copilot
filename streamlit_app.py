@@ -21,6 +21,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
 from mesp_automation_engine import REQUIRED_FIELDS, analyze_folder, analyze_workbook  # noqa: E402
 from deepseek_client import (  # noqa: E402
     clean_ocr_text_with_deepseek,
+    extract_order_id_with_deepseek,
     load_deepseek_config,
     normalize_filename_with_deepseek,
     test_deepseek_connection,
@@ -765,13 +766,22 @@ def recognize_order_id_from_co03_files(files: list) -> dict:
     for uploaded_file in image_files:
         ocr_result = recognize_uploaded_image(uploaded_file, online_ocr_config)
         ocr_text = ocr_result.get("text") or ""
-        order_id = extract_order_id_from_ocr_text(ocr_text)
+        deepseek_result = {}
+        if deepseek_config:
+            try:
+                deepseek_result = extract_order_id_with_deepseek(uploaded_file.name, ocr_text, deepseek_config)
+            except Exception as exc:
+                deepseek_result = {"notes": f"DeepSeek 清洗失败，已使用规则兜底：{exc}"}
+        order_id = (deepseek_result.get("order_id") or "").strip() or extract_order_id_from_ocr_text(ocr_text)
         if order_id:
             return {
                 "order_id": order_id,
                 "source_file": uploaded_file.name,
                 "ocr_text": ocr_text,
-                "status": "已识别",
+                "status": "DeepSeek 清洗识别" if deepseek_result.get("order_id") else "规则兜底识别",
+                "confidence": deepseek_result.get("confidence"),
+                "evidence": deepseek_result.get("evidence"),
+                "notes": deepseek_result.get("notes"),
             }
     return {
         "order_id": "",
@@ -1513,13 +1523,20 @@ with work_col:
                 order_ocr_result = st.session_state.get("co03_order_ocr_result")
                 if order_ocr_result:
                     recognized_order = order_ocr_result.get("order_id") or "未识别"
+                    method_text = order_ocr_result.get("status") or "-"
+                    confidence_text = order_ocr_result.get("confidence")
+                    confidence_part = f"，置信度：{confidence_text}" if confidence_text not in (None, "") else ""
                     if order_ocr_result.get("order_id"):
                         st.success(
-                            f"CO03 截图识别出的订单编号：{recognized_order}（来源：{order_ocr_result.get('source_file') or '-'}）"
+                            f"CO03 截图识别出的订单编号：{recognized_order}（方式：{method_text}{confidence_part}；来源：{order_ocr_result.get('source_file') or '-'}）"
                         )
                     else:
                         st.warning(
                             f"CO03 截图订单编号：{recognized_order}（{order_ocr_result.get('status') or '未识别'}）"
+                        )
+                    if order_ocr_result.get("evidence") or order_ocr_result.get("notes"):
+                        st.caption(
+                            f"识别依据：{order_ocr_result.get('evidence') or '-'}；备注：{order_ocr_result.get('notes') or '-'}"
                         )
                     with st.expander("查看 CO03 OCR 原文"):
                         st.text(order_ocr_result.get("ocr_text") or "")

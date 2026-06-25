@@ -265,3 +265,42 @@ def clean_ocr_text_with_deepseek(filename: str, ocr_text: str, config: DeepSeekC
         "notes": data.get("notes"),
         "raw_response": data,
     }
+
+
+def extract_order_id_with_deepseek(filename: str, ocr_text: str, config: DeepSeekConfig) -> dict[str, Any]:
+    content = deepseek_chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You extract the production order ID from OCR text of an SAP CO03 screenshot. "
+                    "Return strict JSON only, no markdown. The order ID is usually the shorter "
+                    "8-digit number next to the Chinese label 订单 or 订单编号 near the top left of the screenshot. "
+                    "Do not choose long padded strings such as 000000000011000027 when the visible order is 11000027. "
+                    "Return fields: order_id, confidence, evidence, notes. Use null if unknown."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"filename: {filename}\n\n"
+                    "CO03 PaddleOCR text:\n"
+                    f"{ocr_text[:8000]}"
+                ),
+            },
+        ],
+        config,
+        temperature=0,
+        max_tokens=500,
+    )
+    data = parse_deepseek_json(content)
+    order_id = data.get("order_id")
+    if order_id is not None:
+        order_id = str(order_id).strip()
+    return {
+        "order_id": order_id or "",
+        "confidence": data.get("confidence"),
+        "evidence": data.get("evidence"),
+        "notes": data.get("notes"),
+        "raw_response": data,
+    }
