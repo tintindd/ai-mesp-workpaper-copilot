@@ -25,17 +25,18 @@ from deepseek_client import (  # noqa: E402
     normalize_filename_with_deepseek,
     test_deepseek_connection,
 )
-from ocr_client import (  # noqa: E402
-    is_image_file,
-    load_online_ocr_config,
-    online_ocr_available,
-    recognize_co03_product_id,
-    recognize_ckm3_material_id,
-    recognize_uploaded_image,
-)
+import ocr_client  # noqa: E402
 from ckm3_table_builder import build_ckm3_workbook_bytes, extract_ckm3_rows  # noqa: E402
 from spd03015_exporter import build_spd03015_bytes  # noqa: E402
 from supporting_exporter import build_supporting_bytes  # noqa: E402
+
+
+is_image_file = ocr_client.is_image_file
+load_online_ocr_config = ocr_client.load_online_ocr_config
+online_ocr_available = ocr_client.online_ocr_available
+recognize_uploaded_image = ocr_client.recognize_uploaded_image
+recognize_co03_product_id = getattr(ocr_client, "recognize_co03_product_id", None)
+recognize_ckm3_material_id = getattr(ocr_client, "recognize_ckm3_material_id", None)
 
 
 st.set_page_config(
@@ -816,20 +817,22 @@ def run_filename_cleanup_by_bucket(
             if online_ocr_available(online_ocr_config):
                 for uploaded_file in bucket_files.get("CO03") or []:
                     if is_image_file(uploaded_file.name):
-                        detected_co03_product_id = recognize_co03_product_id(
-                            uploaded_file.name,
-                            uploaded_file.getvalue(),
-                            online_ocr_config,
-                        )
+                        if recognize_co03_product_id:
+                            detected_co03_product_id = recognize_co03_product_id(
+                                uploaded_file.name,
+                                uploaded_file.getvalue(),
+                                online_ocr_config,
+                            )
                         if detected_co03_product_id:
                             break
                 for uploaded_file in bucket_files.get("CKM3") or []:
                     if is_image_file(uploaded_file.name):
-                        detected_ckm3_material_id = recognize_ckm3_material_id(
-                            uploaded_file.name,
-                            uploaded_file.getvalue(),
-                            online_ocr_config,
-                        )
+                        if recognize_ckm3_material_id:
+                            detected_ckm3_material_id = recognize_ckm3_material_id(
+                                uploaded_file.name,
+                                uploaded_file.getvalue(),
+                                online_ocr_config,
+                            )
                         if detected_ckm3_material_id:
                             break
 
@@ -849,7 +852,12 @@ def run_filename_cleanup_by_bucket(
                     cleaned["order_id"] = order_id.strip() if order_id.strip() else cleaned.get("order_id") or "待补充"
                     if report == "CKM3":
                         detected_material_id = str(cleaned.get("material_id") or detected_ckm3_material_id or "").strip()
-                        if not detected_material_id and is_image_file(uploaded_file.name) and online_ocr_available(online_ocr_config):
+                        if (
+                            not detected_material_id
+                            and recognize_ckm3_material_id
+                            and is_image_file(uploaded_file.name)
+                            and online_ocr_available(online_ocr_config)
+                        ):
                             detected_material_id = recognize_ckm3_material_id(
                                 uploaded_file.name,
                                 file_bytes,
@@ -858,7 +866,12 @@ def run_filename_cleanup_by_bucket(
                         cleaned["material_id"] = detected_material_id or "待补充"
                     if report == "CO03":
                         detected_product_id = str(cleaned.get("product_id") or detected_co03_product_id or "").strip()
-                        if not detected_product_id and is_image_file(uploaded_file.name) and online_ocr_available(online_ocr_config):
+                        if (
+                            not detected_product_id
+                            and recognize_co03_product_id
+                            and is_image_file(uploaded_file.name)
+                            and online_ocr_available(online_ocr_config)
+                        ):
                             detected_product_id = recognize_co03_product_id(
                                 uploaded_file.name,
                                 file_bytes,
