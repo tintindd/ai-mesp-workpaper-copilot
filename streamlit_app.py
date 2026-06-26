@@ -529,7 +529,7 @@ def build_analysis_bundle_from_folder(source_dir: Path, period: str, program: st
     (spp_dir / "AI-MESP_SPP_Supporting.xlsx").write_bytes(supporting_bytes)
     summary = result.get("summary", {})
     selected_spd_bytes = (
-        build_spd03015_bytes(spp_dir, program=program, period=period)
+        build_spd03015_bytes(source_dir, program=program, period=period)
         if summary.get("sample_count", 0) > 0 and summary.get("recognized_file_count", 0) > 0
         else b""
     )
