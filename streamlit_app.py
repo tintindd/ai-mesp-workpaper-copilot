@@ -29,6 +29,8 @@ from ocr_client import (  # noqa: E402
     is_image_file,
     load_online_ocr_config,
     online_ocr_available,
+    recognize_co03_product_id,
+    recognize_ckm3_material_id,
     recognize_uploaded_image,
 )
 from ckm3_table_builder import build_ckm3_workbook_bytes, extract_ckm3_rows  # noqa: E402
@@ -741,6 +743,7 @@ def _standard_cleanup_filename(
     sample_no: str,
     order_id: str,
     material_id: str,
+    product_id: str = "",
     report: str,
     evidence_kind: str,
     extension: str,
@@ -753,6 +756,12 @@ def _standard_cleanup_filename(
         return (
             f"样本{sample_text}/{sample_text}.订单编号{order_text}-"
             f"物料ID-{material_text}-CKM3-{evidence_kind}.{extension_text}"
+        )
+    if report == "CO03" and product_id:
+        product_text = str(product_id).strip()
+        return (
+            f"样本{sample_text}/{sample_text}.订单编号{order_text}-"
+            f"物料编码-{product_text}-CO03-{evidence_kind}.{extension_text}"
         )
     return f"样本{sample_text}/{sample_text}.订单编号{order_text}-{report}-{evidence_kind}.{extension_text}"
 
@@ -792,7 +801,6 @@ def build_standard_named_zip_bytes(cleanup_results: list[dict]) -> bytes:
 def run_filename_cleanup_by_bucket(
     sample_no: str,
     order_id: str,
-    material_id: str,
     bucket_files: dict[str, list],
 ) -> None:
     st.session_state["filename_cleanup_results"] = []
@@ -803,6 +811,28 @@ def run_filename_cleanup_by_bucket(
     try:
         with tempfile.TemporaryDirectory(prefix="mesp_filename_check_") as temp:
             temp_dir = Path(temp)
+            detected_co03_product_id = ""
+            detected_ckm3_material_id = ""
+            if online_ocr_available(online_ocr_config):
+                for uploaded_file in bucket_files.get("CO03") or []:
+                    if is_image_file(uploaded_file.name):
+                        detected_co03_product_id = recognize_co03_product_id(
+                            uploaded_file.name,
+                            uploaded_file.getvalue(),
+                            online_ocr_config,
+                        )
+                        if detected_co03_product_id:
+                            break
+                for uploaded_file in bucket_files.get("CKM3") or []:
+                    if is_image_file(uploaded_file.name):
+                        detected_ckm3_material_id = recognize_ckm3_material_id(
+                            uploaded_file.name,
+                            uploaded_file.getvalue(),
+                            online_ocr_config,
+                        )
+                        if detected_ckm3_material_id:
+                            break
+
             for report, files in bucket_files.items():
                 for uploaded_file in files or []:
                     file_bytes = uploaded_file.getvalue()
@@ -818,13 +848,30 @@ def run_filename_cleanup_by_bucket(
                     cleaned["report_type"] = report
                     cleaned["order_id"] = order_id.strip() if order_id.strip() else cleaned.get("order_id") or "待补充"
                     if report == "CKM3":
-                        cleaned["material_id"] = str(material_id or cleaned.get("material_id") or "待补充").strip()
+                        detected_material_id = str(cleaned.get("material_id") or detected_ckm3_material_id or "").strip()
+                        if not detected_material_id and is_image_file(uploaded_file.name) and online_ocr_available(online_ocr_config):
+                            detected_material_id = recognize_ckm3_material_id(
+                                uploaded_file.name,
+                                file_bytes,
+                                online_ocr_config,
+                            )
+                        cleaned["material_id"] = detected_material_id or "待补充"
+                    if report == "CO03":
+                        detected_product_id = str(cleaned.get("product_id") or detected_co03_product_id or "").strip()
+                        if not detected_product_id and is_image_file(uploaded_file.name) and online_ocr_available(online_ocr_config):
+                            detected_product_id = recognize_co03_product_id(
+                                uploaded_file.name,
+                                file_bytes,
+                                online_ocr_config,
+                            )
+                        cleaned["product_id"] = detected_product_id
                     cleaned["evidence_kind"] = evidence_kind
                     cleaned["extension"] = extension
                     cleaned["standard_filename"] = _standard_cleanup_filename(
                         sample_no=cleaned["sample_no"],
                         order_id=cleaned["order_id"],
                         material_id=cleaned.get("material_id") or "",
+                        product_id=cleaned.get("product_id") or "",
                         report=report,
                         evidence_kind=evidence_kind,
                         extension=extension,
@@ -857,7 +904,7 @@ def run_ckm3_ocr_to_excel(uploaded_files) -> None:
     st.session_state["ckm3_ocr_excels"] = []
     st.session_state.pop("ckm3_ocr_error", None)
     if not online_ocr_available(online_ocr_config):
-        st.session_state["ckm3_ocr_error"] = "在线 PaddleOCR 服务未配置，无法识别 CKM3 截图。"
+        st.session_state["ckm3_ocr_error"] = "Qwen-OCR 服务未配置，无法识别 CKM3 截图。"
         return
 
     image_files = [item for item in uploaded_files or [] if is_image_file(item.name)]
@@ -902,7 +949,7 @@ def run_ocr_cleanup(uploaded_files) -> None:
     st.session_state["ocr_cleanup_results"] = []
     st.session_state.pop("ocr_cleanup_error", None)
     if not online_ocr_available(online_ocr_config):
-        st.session_state["ocr_cleanup_error"] = "在线 PaddleOCR 服务未配置，无法运行图片 OCR。"
+        st.session_state["ocr_cleanup_error"] = "Qwen-OCR 服务未配置，无法运行图片 OCR。"
         return
     if not deepseek_config:
         st.session_state["ocr_cleanup_error"] = "DeepSeek API Key 未配置，无法清洗 OCR 文本。"
@@ -1002,6 +1049,7 @@ def build_cleanup_excel_bytes(filename_results: list[dict], ocr_results: list[di
         "原始文件",
         "样本号",
         "订单编号",
+        "物料编码",
         "物料ID",
         "报表类型",
         "证据类型",
@@ -1020,7 +1068,7 @@ def build_cleanup_excel_bytes(filename_results: list[dict], ocr_results: list[di
         _write_cleanup_row(
             summary_sheet,
             row_index,
-            "在线 PaddleOCR + DeepSeek",
+            "Qwen-OCR + DeepSeek",
             cleaned,
             source_file=item.get("source_file"),
             ocr_line_count=item.get("ocr_line_count"),
@@ -1056,6 +1104,7 @@ def build_filename_cleanup_excel_bytes(cleanup_results: list[dict]) -> bytes:
         "原始文件",
         "样本号",
         "订单编号",
+        "物料编码",
         "物料ID",
         "识别类型",
         "证据类型",
@@ -1070,6 +1119,7 @@ def build_filename_cleanup_excel_bytes(cleanup_results: list[dict]) -> bytes:
             item.get("source_file"),
             item.get("sample_no"),
             item.get("order_id"),
+            item.get("product_id"),
             item.get("material_id"),
             item.get("report_type"),
             item.get("evidence_kind"),
@@ -1159,6 +1209,7 @@ def _write_cleanup_row(
         source_file or item.get("source_file"),
         item.get("sample_no"),
         item.get("order_id"),
+        item.get("product_id"),
         item.get("material_id"),
         item.get("report_type"),
         item.get("evidence_kind"),
@@ -1365,9 +1416,9 @@ with work_col:
                     st.info("仅用于 CKM3 截图，识别后生成可替代 CKM3-表格.xlsx 的支持性 Excel。CO03、KSBT、3611 仍优先使用 SAP 导出的 Excel/CSV。")
                 with config_col:
                     if online_ocr_available(online_ocr_config):
-                        st.success("在线 PaddleOCR 服务已配置")
+                        st.success("Qwen-OCR 服务已配置，智谱视觉可作为备用通道")
                     else:
-                        st.warning("在线 PaddleOCR 服务未配置，OCR 暂不可用。")
+                        st.warning("Qwen-OCR 服务未配置，OCR 暂不可用。")
 
                 ckm3_ocr_files = st.file_uploader(
                     "上传 CKM3 截图（PNG/JPG/JPEG/PDF）",
@@ -1437,7 +1488,7 @@ with work_col:
                         else:
                             st.error(deepseek_status.get("message"))
 
-                sample_col, order_col, material_col = st.columns(3)
+                sample_col, order_col = st.columns(2)
                 with sample_col:
                     cleanup_sample_no = st.text_input(
                         "样本编号",
@@ -1451,13 +1502,6 @@ with work_col:
                         key="cleanup_order_id",
                         placeholder="例如 11000437",
                     )
-                with material_col:
-                    cleanup_material_id = st.text_input(
-                        "CKM3 物料ID",
-                        key="cleanup_material_id",
-                        placeholder="例如 13014012",
-                    )
-
                 st.markdown(
                     """
                     <div class="upload-rules">
@@ -1466,7 +1510,7 @@ with work_col:
                       <code>样本1/1.订单编号11000437-CO03-表格.xlsx</code>、
                       <code>样本1/1.订单编号11000437-3611-截图.png</code>、
                       <code>样本1/1.订单编号11000437-物料ID-13014012-CKM3-截图.png</code>。
-                      若 CO03、KSBT、3611、CKM3 都上传截图和 Excel，将导出 4×2 个标准命名文件。
+                      CKM3 截图会自动识别物料ID；若 CO03、KSBT、3611、CKM3 都上传截图和 Excel，将导出 4×2 个标准命名文件。
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -1489,7 +1533,7 @@ with work_col:
                     disabled=total_cleanup_files == 0,
                     type="primary",
                     on_click=run_filename_cleanup_by_bucket,
-                    args=(cleanup_sample_no, cleanup_order_id, cleanup_material_id, bucket_files),
+                    args=(cleanup_sample_no, cleanup_order_id, bucket_files),
                 )
 
                 cleanup_error = st.session_state.get("filename_cleanup_error")
@@ -1504,6 +1548,7 @@ with work_col:
                             "原始文件": item.get("source_file"),
                             "样本号": item.get("sample_no") or "-",
                             "订单编号": item.get("order_id") or "-",
+                            "物料编码": item.get("product_id") or "-",
                             "物料ID": item.get("material_id") or "-",
                             "识别类型": item.get("report_type") or "-",
                             "证据类型": item.get("evidence_kind") or "-",

@@ -216,7 +216,7 @@ def clean_ocr_text_with_deepseek(filename: str, ocr_text: str, config: DeepSeekC
             {
                 "role": "system",
                 "content": (
-                    "You clean PaddleOCR text extracted from SAP audit evidence screenshots. "
+                    "You clean OCR text extracted from SAP audit evidence screenshots. "
                     "Return strict JSON only, no markdown. Identify sample_no, order_id, material_id, "
                     "report_type, evidence_kind, key_fields, standard_filename, confidence, and notes. "
                     "report_type must be one of CO03, KSBT, 3611, CKM3, unknown. "
@@ -228,7 +228,7 @@ def clean_ocr_text_with_deepseek(filename: str, ocr_text: str, config: DeepSeekC
                 "role": "user",
                 "content": (
                     f"filename: {filename}\n\n"
-                    "PaddleOCR text:\n"
+                    "OCR text:\n"
                     f"{ocr_text[:8000]}"
                 ),
             },
@@ -265,4 +265,3 @@ def clean_ocr_text_with_deepseek(filename: str, ocr_text: str, config: DeepSeekC
         "notes": data.get("notes"),
         "raw_response": data,
     }
-

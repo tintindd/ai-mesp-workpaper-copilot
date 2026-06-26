@@ -114,7 +114,10 @@ def _clean_ocr_row(raw_row: list[str]) -> dict[str, Any] | None:
 
     category = _normalize_category(raw_row[0])
     quantity, unit = _split_quantity(raw_row[1], raw_row[2] if len(raw_row) > 2 else "")
-    numeric_values = [_parse_number(value) for value in raw_row[3:]]
+    numeric_start = 3
+    if len(raw_row) > 2 and str(raw_row[2] or "").strip() and not re.search(r"[A-Za-z]", str(raw_row[2] or "")):
+        numeric_start = 2
+    numeric_values = [_parse_number(value) for value in raw_row[numeric_start:]]
     while len(numeric_values) < 14:
         numeric_values.append(0)
     numeric_values = numeric_values[:14]
@@ -172,7 +175,7 @@ def _split_quantity(quantity_text: str, unit_text: str) -> tuple[int | float, st
 
 
 def _parse_number(value: str) -> int | float:
-    text = str(value or "").strip().replace(",", "")
+    text = str(value or "").strip().replace(",", "").replace("，", "")
     if not text:
         return 0
     if text.endswith("-"):
