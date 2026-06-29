@@ -271,6 +271,46 @@ def recognize_co03_product_id(filename: str, content: bytes, config: OnlineOCRCo
     return _first_digit_code(product_id)
 
 
+def recognize_co03_order_id(filename: str, content: bytes, config: OnlineOCRConfig) -> str:
+    crop_bytes = _crop_co03_order_field(content)
+    prompt = (
+        "图片只有 SAP 顶部“订单”这一行。请读取“订单”标签右侧第一个 8 位订单编号，"
+        "不要读取后面的长编号。只返回严格 JSON：{\"order_id\":\"\"}"
+    )
+    response = call_openai_compatible_vision_with_prompt(
+        filename=f"{Path(filename).stem}_co03_order.png",
+        content=crop_bytes,
+        config=config,
+        default_model=DEFAULT_QWEN_OCR_MODEL if config.provider == "qwen" else DEFAULT_ZHIPUAI_MODEL,
+        retry_label=f"{config.provider} CO03 order OCR",
+        prompt=prompt,
+    )
+    data = _parse_jsonish(_extract_chat_completion_text(response.get("raw_response") or response))
+    order_id = str(data.get("order_id") or "").strip()
+    match = re.search(r"\d{8}", order_id)
+    return match.group(0) if match else ""
+
+
+def recognize_ksbt_cost_center(filename: str, content: bytes, config: OnlineOCRConfig) -> str:
+    crop_bytes = _crop_ksbt_cost_center_field(content)
+    prompt = (
+        "图片只有 SAP 顶部“成本中心”这一行。请读取“成本中心”标签右侧的完整编码，"
+        "编码可能包含数字和大写字母。只返回严格 JSON：{\"cost_center\":\"\"}"
+    )
+    response = call_openai_compatible_vision_with_prompt(
+        filename=f"{Path(filename).stem}_ksbt_cost_center.png",
+        content=crop_bytes,
+        config=config,
+        default_model=DEFAULT_QWEN_OCR_MODEL if config.provider == "qwen" else DEFAULT_ZHIPUAI_MODEL,
+        retry_label=f"{config.provider} KSBT cost center OCR",
+        prompt=prompt,
+    )
+    data = _parse_jsonish(_extract_chat_completion_text(response.get("raw_response") or response))
+    cost_center = str(data.get("cost_center") or "").strip().upper()
+    match = re.search(r"[A-Z0-9]{6,14}", cost_center)
+    return match.group(0) if match else ""
+
+
 def call_openai_compatible_vision_with_prompt(
     *,
     filename: str,
@@ -351,6 +391,44 @@ def _crop_co03_material_field(content: bytes) -> bytes:
     top = int(height * 0.213)
     right = int(width * 0.396)
     bottom = int(height * 0.246)
+    crop = image.crop((left, top, right, bottom))
+    crop = crop.resize((crop.width * 4, crop.height * 4))
+    output = BytesIO()
+    crop.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _crop_co03_order_field(content: bytes) -> bytes:
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError("Pillow is required for CO03 order field OCR.") from exc
+
+    image = Image.open(BytesIO(content)).convert("RGB")
+    width, height = image.size
+    left = 0
+    top = int(height * 0.153)
+    right = int(width * 0.42)
+    bottom = int(height * 0.185)
+    crop = image.crop((left, top, right, bottom))
+    crop = crop.resize((crop.width * 4, crop.height * 4))
+    output = BytesIO()
+    crop.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _crop_ksbt_cost_center_field(content: bytes) -> bytes:
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError("Pillow is required for KSBT cost center field OCR.") from exc
+
+    image = Image.open(BytesIO(content)).convert("RGB")
+    width, height = image.size
+    left = 0
+    top = int(height * 0.16)
+    right = int(width * 0.32)
+    bottom = int(height * 0.58)
     crop = image.crop((left, top, right, bottom))
     crop = crop.resize((crop.width * 4, crop.height * 4))
     output = BytesIO()

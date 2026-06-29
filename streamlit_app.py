@@ -35,8 +35,10 @@ is_image_file = ocr_client.is_image_file
 load_online_ocr_config = ocr_client.load_online_ocr_config
 online_ocr_available = ocr_client.online_ocr_available
 recognize_uploaded_image = ocr_client.recognize_uploaded_image
+recognize_co03_order_id = getattr(ocr_client, "recognize_co03_order_id", None)
 recognize_co03_product_id = getattr(ocr_client, "recognize_co03_product_id", None)
 recognize_ckm3_material_id = getattr(ocr_client, "recognize_ckm3_material_id", None)
+recognize_ksbt_cost_center = getattr(ocr_client, "recognize_ksbt_cost_center", None)
 
 
 st.set_page_config(
@@ -745,6 +747,7 @@ def _standard_cleanup_filename(
     order_id: str,
     material_id: str,
     product_id: str = "",
+    cost_center: str = "",
     report: str,
     evidence_kind: str,
     extension: str,
@@ -763,6 +766,12 @@ def _standard_cleanup_filename(
         return (
             f"样本{sample_text}/{sample_text}.订单编号{order_text}-"
             f"物料编码-{product_text}-CO03-{evidence_kind}.{extension_text}"
+        )
+    if report == "KSBT" and cost_center:
+        cost_center_text = str(cost_center).strip()
+        return (
+            f"样本{sample_text}/{sample_text}.订单编号{order_text}-"
+            f"成本中心-{cost_center_text}-KSBT-{evidence_kind}.{extension_text}"
         )
     return f"样本{sample_text}/{sample_text}.订单编号{order_text}-{report}-{evidence_kind}.{extension_text}"
 
@@ -799,6 +808,188 @@ def build_standard_named_zip_bytes(cleanup_results: list[dict]) -> bytes:
     return output.getvalue()
 
 
+def current_evidence_params() -> dict:
+    return st.session_state.setdefault(
+        "evidence_params",
+        {
+            "sample_no": "1",
+            "order_id": "",
+            "product_id": "",
+            "material_id": "",
+            "cost_center": "",
+        },
+    )
+
+
+def run_parameter_ocr(sample_no: str, co03_file, ckm3_file, ksbt_file) -> None:
+    params = {
+        "sample_no": str(sample_no or "1").strip(),
+        "order_id": "",
+        "product_id": "",
+        "material_id": "",
+        "cost_center": "",
+    }
+    preview_items = []
+    st.session_state.pop("parameter_ocr_error", None)
+    if not online_ocr_available(online_ocr_config):
+        st.session_state["parameter_ocr_error"] = "Qwen-OCR 服务未配置，无法识别参数。"
+        return
+    try:
+        progress = st.progress(0, text="准备识别样本参数...")
+        status = st.empty()
+        steps = max(sum(1 for item in [co03_file, ckm3_file, ksbt_file] if item), 1)
+        done = 0
+
+        def tick(message: str) -> None:
+            nonlocal done
+            status.caption(message)
+            progress.progress(min(done / steps, 1.0), text=message)
+
+        if co03_file:
+            data = co03_file.getvalue()
+            tick(f"正在识别 CO03 订单编号和物料编码：{co03_file.name}")
+            if recognize_co03_order_id:
+                params["order_id"] = recognize_co03_order_id(co03_file.name, data, online_ocr_config)
+            if recognize_co03_product_id:
+                params["product_id"] = recognize_co03_product_id(co03_file.name, data, online_ocr_config)
+            preview_items.append({"label": "CO03截图", "source_file": co03_file.name, "file_bytes": data})
+            done += 1
+            tick("CO03 参数识别完成")
+
+        if ckm3_file:
+            data = ckm3_file.getvalue()
+            tick(f"正在识别 CKM3 物料ID：{ckm3_file.name}")
+            if recognize_ckm3_material_id:
+                params["material_id"] = recognize_ckm3_material_id(ckm3_file.name, data, online_ocr_config)
+            preview_items.append({"label": "CKM3截图", "source_file": ckm3_file.name, "file_bytes": data})
+            done += 1
+            tick("CKM3 参数识别完成")
+
+        if ksbt_file:
+            data = ksbt_file.getvalue()
+            tick(f"正在识别 KSBT 成本中心：{ksbt_file.name}")
+            if recognize_ksbt_cost_center:
+                params["cost_center"] = recognize_ksbt_cost_center(ksbt_file.name, data, online_ocr_config)
+            preview_items.append({"label": "KSBT截图", "source_file": ksbt_file.name, "file_bytes": data})
+            done += 1
+            tick("KSBT 参数识别完成")
+
+        progress.progress(1.0, text="参数 OCR 识别完成")
+        status.caption("参数 OCR 识别完成")
+        st.session_state["evidence_params"] = params
+        st.session_state["parameter_ocr_previews"] = preview_items
+        st.session_state["parameter_ocr_confirmed"] = False
+    except Exception as exc:
+        st.session_state["parameter_ocr_error"] = str(exc)
+
+
+def apply_manual_params(sample_no: str, order_id: str, product_id: str, material_id: str, cost_center: str) -> None:
+    st.session_state["evidence_params"] = {
+        "sample_no": str(sample_no or "1").strip(),
+        "order_id": str(order_id or "").strip(),
+        "product_id": str(product_id or "").strip(),
+        "material_id": str(material_id or "").strip(),
+        "cost_center": str(cost_center or "").strip(),
+    }
+    st.session_state["parameter_ocr_confirmed"] = True
+
+
+def build_parameter_standard_files(params: dict, preview_items: list[dict]) -> list[dict]:
+    results = []
+    sample_no = params.get("sample_no") or "1"
+    order_id = params.get("order_id") or "待补充"
+    for item in preview_items:
+        source_file = item.get("source_file") or ""
+        label = item.get("label") or ""
+        if "CO03" in label:
+            report = "CO03"
+            product_id = params.get("product_id") or ""
+            material_id = ""
+            cost_center = ""
+        elif "CKM3" in label:
+            report = "CKM3"
+            product_id = ""
+            material_id = params.get("material_id") or ""
+            cost_center = ""
+        elif "KSBT" in label:
+            report = "KSBT"
+            product_id = ""
+            material_id = ""
+            cost_center = params.get("cost_center") or ""
+        else:
+            continue
+        extension = Path(source_file).suffix.lower().lstrip(".") or "png"
+        standard_filename = _standard_cleanup_filename(
+            sample_no=sample_no,
+            order_id=order_id,
+            product_id=product_id,
+            material_id=material_id,
+            cost_center=cost_center,
+            report=report,
+            evidence_kind="截图",
+            extension=extension,
+        )
+        results.append(
+            {
+                "上传位置": report,
+                "source_file": source_file,
+                "sample_no": sample_no,
+                "order_id": order_id,
+                "product_id": product_id,
+                "material_id": material_id,
+                "cost_center": cost_center,
+                "report_type": report,
+                "evidence_kind": "截图",
+                "extension": extension,
+                "standard_filename": standard_filename,
+                "field_status": "参数OCR截图",
+                "missing_field_labels": [],
+                "file_bytes": item.get("file_bytes"),
+            }
+        )
+    return results
+
+
+def confirm_parameter_standard_files(download_choice: bool) -> None:
+    params = current_evidence_params()
+    preview_items = st.session_state.get("parameter_ocr_previews") or []
+    parameter_files = build_parameter_standard_files(params, preview_items)
+    st.session_state["parameter_standard_files"] = parameter_files
+    st.session_state["parameter_ocr_confirmed"] = True
+    if not download_choice:
+        existing = st.session_state.get("filename_cleanup_results") or []
+        st.session_state["filename_cleanup_results"] = [*parameter_files, *existing]
+        st.session_state["standard_named_zip_bytes"] = build_standard_named_zip_bytes(
+            st.session_state["filename_cleanup_results"]
+        )
+
+
+def sample_completeness_rows(sample_count: int, cleanup_results: list[dict]) -> list[dict]:
+    by_sample: dict[str, set[str]] = {str(index): set() for index in range(1, sample_count + 1)}
+    for item in cleanup_results:
+        sample = str(item.get("sample_no") or "")
+        report = str(item.get("report_type") or "")
+        kind = str(item.get("evidence_kind") or "")
+        if sample and report:
+            by_sample.setdefault(sample, set()).add(f"{report}-{kind}")
+    rows = []
+    required_reports = ["CO03", "KSBT", "3611", "CKM3"]
+    for sample, files in sorted(by_sample.items(), key=lambda pair: int(pair[0]) if pair[0].isdigit() else 999):
+        missing = []
+        for report in required_reports:
+            if not any(value.startswith(report) for value in files):
+                missing.append(report)
+        rows.append(
+            {
+                "样本": f"样本{sample}",
+                "已识别文件": "、".join(sorted(files)) or "-",
+                "缺失文件": "、".join(missing) or "完整",
+                "是否可计算": "是" if not missing else "否",
+            }
+        )
+    return rows
+
+
 def run_filename_cleanup_by_bucket(
     sample_no: str,
     order_id: str,
@@ -810,6 +1001,12 @@ def run_filename_cleanup_by_bucket(
 
     results = []
     try:
+        params = current_evidence_params()
+        sample_no = str(sample_no or params.get("sample_no") or "1").strip()
+        order_id = str(order_id or params.get("order_id") or "").strip()
+        param_product_id = str(params.get("product_id") or "").strip()
+        param_material_id = str(params.get("material_id") or "").strip()
+        param_cost_center = str(params.get("cost_center") or "").strip()
         total_files = sum(len(files or []) for files in bucket_files.values())
         total_steps = max(total_files + 3, 1)
         step_index = 0
@@ -824,8 +1021,9 @@ def run_filename_cleanup_by_bucket(
 
         with tempfile.TemporaryDirectory(prefix="mesp_filename_check_") as temp:
             temp_dir = Path(temp)
-            detected_co03_product_id = ""
-            detected_ckm3_material_id = ""
+            detected_co03_product_id = param_product_id
+            detected_ckm3_material_id = param_material_id
+            detected_ksbt_cost_center = param_cost_center
             if online_ocr_available(online_ocr_config):
                 for uploaded_file in bucket_files.get("CO03") or []:
                     if is_image_file(uploaded_file.name):
@@ -848,6 +1046,17 @@ def run_filename_cleanup_by_bucket(
                                 online_ocr_config,
                             )
                         if detected_ckm3_material_id:
+                            break
+                for uploaded_file in bucket_files.get("KSBT") or []:
+                    if is_image_file(uploaded_file.name):
+                        if recognize_ksbt_cost_center:
+                            update_progress(f"正在识别 KSBT 成本中心：{uploaded_file.name}")
+                            detected_ksbt_cost_center = recognize_ksbt_cost_center(
+                                uploaded_file.name,
+                                uploaded_file.getvalue(),
+                                online_ocr_config,
+                            )
+                        if detected_ksbt_cost_center:
                             break
 
             for report, files in bucket_files.items():
@@ -895,6 +1104,21 @@ def run_filename_cleanup_by_bucket(
                                 online_ocr_config,
                             )
                         cleaned["product_id"] = detected_product_id
+                    if report == "KSBT":
+                        detected_cost_center = str(cleaned.get("cost_center") or detected_ksbt_cost_center or "").strip()
+                        if (
+                            not detected_cost_center
+                            and recognize_ksbt_cost_center
+                            and is_image_file(uploaded_file.name)
+                            and online_ocr_available(online_ocr_config)
+                        ):
+                            progress_status.caption(f"正在补充识别 KSBT 成本中心：{uploaded_file.name}")
+                            detected_cost_center = recognize_ksbt_cost_center(
+                                uploaded_file.name,
+                                file_bytes,
+                                online_ocr_config,
+                            )
+                        cleaned["cost_center"] = detected_cost_center
                     cleaned["evidence_kind"] = evidence_kind
                     cleaned["extension"] = extension
                     cleaned["standard_filename"] = _standard_cleanup_filename(
@@ -902,6 +1126,7 @@ def run_filename_cleanup_by_bucket(
                         order_id=cleaned["order_id"],
                         material_id=cleaned.get("material_id") or "",
                         product_id=cleaned.get("product_id") or "",
+                        cost_center=cleaned.get("cost_center") or "",
                         report=report,
                         evidence_kind=evidence_kind,
                         extension=extension,
@@ -1097,6 +1322,7 @@ def build_cleanup_excel_bytes(filename_results: list[dict], ocr_results: list[di
         "订单编号",
         "物料编码",
         "物料ID",
+        "成本中心",
         "报表类型",
         "证据类型",
         "建议标准文件名",
@@ -1152,6 +1378,7 @@ def build_filename_cleanup_excel_bytes(cleanup_results: list[dict]) -> bytes:
         "订单编号",
         "物料编码",
         "物料ID",
+        "成本中心",
         "识别类型",
         "证据类型",
         "建议标准文件名",
@@ -1167,6 +1394,7 @@ def build_filename_cleanup_excel_bytes(cleanup_results: list[dict]) -> bytes:
             item.get("order_id"),
             item.get("product_id"),
             item.get("material_id"),
+            item.get("cost_center"),
             item.get("report_type"),
             item.get("evidence_kind"),
             item.get("standard_filename"),
@@ -1254,10 +1482,11 @@ def _write_cleanup_row(
         source,
         source_file or item.get("source_file"),
         item.get("sample_no"),
-        item.get("order_id"),
-        item.get("product_id"),
-        item.get("material_id"),
-        item.get("report_type"),
+            item.get("order_id"),
+            item.get("product_id"),
+            item.get("material_id"),
+            item.get("cost_center"),
+            item.get("report_type"),
         item.get("evidence_kind"),
         item.get("standard_filename"),
         item.get("confidence"),
@@ -1454,7 +1683,85 @@ with work_col:
             )
             st.info(f"当前选择的测试程序：{st.session_state.get('test_program', 'SPD03012')}")
 
-            tab_ocr, tab_cleanup, tab_upload = st.tabs(["OCR", "文件名清洗", "计算结果"])
+            st.markdown("### 1. 参数获取")
+            param_mode = st.radio(
+                "参数来源",
+                ["OCR识别", "手工输入"],
+                horizontal=True,
+                key="param_capture_mode",
+            )
+            params = current_evidence_params()
+            if param_mode == "手工输入":
+                manual_cols = st.columns(5)
+                manual_sample = manual_cols[0].text_input("样本编号", value=params.get("sample_no", "1"), key="manual_sample_no")
+                manual_order = manual_cols[1].text_input("订单编号", value=params.get("order_id", ""), key="manual_order_id")
+                manual_product = manual_cols[2].text_input("CO03物料编码", value=params.get("product_id", ""), key="manual_product_id")
+                manual_material = manual_cols[3].text_input("CKM3物料ID", value=params.get("material_id", ""), key="manual_material_id")
+                manual_cost_center = manual_cols[4].text_input("KSBT成本中心", value=params.get("cost_center", ""), key="manual_cost_center")
+                st.button(
+                    "确认手工参数",
+                    type="primary",
+                    on_click=apply_manual_params,
+                    args=(manual_sample, manual_order, manual_product, manual_material, manual_cost_center),
+                )
+            else:
+                st.caption("上传 CO03 截图识别订单编号和物料编码，上传 KSBT 截图识别成本中心，上传 CKM3 截图识别物料ID。")
+                ocr_cols = st.columns(4)
+                ocr_sample_no = ocr_cols[0].text_input("样本编号", value=params.get("sample_no", "1"), key="ocr_sample_no")
+                co03_param_file = ocr_cols[1].file_uploader("CO03截图", type=["png", "jpg", "jpeg"], key="param_co03_file")
+                ksbt_param_file = ocr_cols[2].file_uploader("KSBT截图", type=["png", "jpg", "jpeg"], key="param_ksbt_file")
+                ckm3_param_file = ocr_cols[3].file_uploader("CKM3截图", type=["png", "jpg", "jpeg"], key="param_ckm3_file")
+                st.button(
+                    "开始OCR识别参数",
+                    disabled=not online_ocr_available(online_ocr_config) or not any([co03_param_file, ksbt_param_file, ckm3_param_file]),
+                    type="primary",
+                    on_click=run_parameter_ocr,
+                    args=(ocr_sample_no, co03_param_file, ckm3_param_file, ksbt_param_file),
+                )
+                if st.session_state.get("parameter_ocr_error"):
+                    st.error(st.session_state["parameter_ocr_error"])
+
+            params = current_evidence_params()
+            st.dataframe(
+                [
+                    {
+                        "样本编号": params.get("sample_no") or "-",
+                        "订单编号": params.get("order_id") or "-",
+                        "CO03物料编码": params.get("product_id") or "-",
+                        "CKM3物料ID": params.get("material_id") or "-",
+                        "KSBT成本中心": params.get("cost_center") or "-",
+                    }
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            preview_items = st.session_state.get("parameter_ocr_previews") or []
+            if preview_items:
+                with st.expander("查看参数OCR截图预览", expanded=False):
+                    for item in preview_items:
+                        st.markdown(f"**{item.get('label')}：{item.get('source_file')}**")
+                        st.image(item.get("file_bytes"), use_container_width=True)
+                keep_for_cleanup = st.checkbox("确认并保留这些截图到下一步文件名清洗", value=True, key="keep_param_files_for_cleanup")
+                confirm_cols = st.columns([1, 1, 3])
+                confirm_cols[0].button(
+                    "确认参数和截图",
+                    type="primary",
+                    on_click=confirm_parameter_standard_files,
+                    args=(not keep_for_cleanup,),
+                )
+                if st.session_state.get("parameter_standard_files"):
+                    param_zip = build_standard_named_zip_bytes(st.session_state["parameter_standard_files"])
+                    confirm_cols[1].download_button(
+                        "下载参数截图ZIP",
+                        data=param_zip,
+                        file_name=f"样本{params.get('sample_no') or '1'}_参数截图标准命名.zip",
+                        mime="application/zip",
+                        type="secondary",
+                    )
+
+            st.markdown("### 2. 文件名清洗与计算")
+            tab_ocr, tab_cleanup, tab_upload = st.tabs(["CKM3表格OCR", "文件名清洗", "计算结果"])
 
             with tab_ocr:
                 ocr_col, config_col = st.columns([1.25, 1])
@@ -1534,20 +1841,42 @@ with work_col:
                         else:
                             st.error(deepseek_status.get("message"))
 
-                sample_col, order_col = st.columns(2)
+                params = current_evidence_params()
+                sample_total_col, sample_col, order_col = st.columns(3)
+                with sample_total_col:
+                    cleanup_sample_count = st.number_input(
+                        "样本总数",
+                        min_value=1,
+                        max_value=50,
+                        value=int(st.session_state.get("cleanup_sample_count", 1)),
+                        step=1,
+                        key="cleanup_sample_count",
+                    )
                 with sample_col:
-                    cleanup_sample_no = st.text_input(
-                        "样本编号",
-                        value="1",
-                        key="cleanup_sample_no",
-                        placeholder="例如 1",
+                    cleanup_sample_no = st.selectbox(
+                        "当前清洗样本",
+                        [str(index) for index in range(1, int(cleanup_sample_count) + 1)],
+                        index=max(min(int(params.get("sample_no") or 1), int(cleanup_sample_count)) - 1, 0),
+                        key="cleanup_sample_no_select",
                     )
                 with order_col:
                     cleanup_order_id = st.text_input(
                         "订单编号",
+                        value=params.get("order_id") or "",
                         key="cleanup_order_id",
                         placeholder="例如 11000437",
                     )
+                skip_cleanup = st.checkbox(
+                    "此批文件已是标准命名，不需要文件名清洗",
+                    key="skip_filename_cleanup",
+                )
+                completeness = sample_completeness_rows(
+                    int(cleanup_sample_count),
+                    st.session_state.get("filename_cleanup_results") or [],
+                )
+                st.dataframe(completeness, use_container_width=True, hide_index=True)
+                if skip_cleanup:
+                    st.success("已标记为无需文件名清洗。请进入“计算结果”上传标准格式样本文件或 zip 包进行计算。")
                 st.markdown(
                     """
                     <div class="upload-rules">
@@ -1596,6 +1925,7 @@ with work_col:
                             "订单编号": item.get("order_id") or "-",
                             "物料编码": item.get("product_id") or "-",
                             "物料ID": item.get("material_id") or "-",
+                            "成本中心": item.get("cost_center") or "-",
                             "识别类型": item.get("report_type") or "-",
                             "证据类型": item.get("evidence_kind") or "-",
                             "建议标准文件名": item.get("standard_filename") or "-",
