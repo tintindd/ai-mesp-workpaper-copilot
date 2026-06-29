@@ -879,6 +879,15 @@ def current_evidence_params(sample_no: str | None = None) -> dict:
     return _blank_evidence_params(selected_sample)
 
 
+def evidence_sample_count() -> int:
+    numeric_samples = []
+    for row in evidence_params_table():
+        sample_no = str(row.get("sample_no") or "").strip()
+        if sample_no.isdigit():
+            numeric_samples.append(int(sample_no))
+    return max([1, *numeric_samples])
+
+
 def run_parameter_ocr(sample_no: str, co03_file, ckm3_file, ksbt_file) -> None:
     params = {
         "sample_no": str(sample_no or "1").strip(),
@@ -1077,7 +1086,8 @@ def sample_completeness_rows_v2(
             rows.append(
                 {
                     "样本": f"样本{sample}",
-                    "无需清洗": "是",
+                    "此样本已是标准命名": True,
+                    "是否需要清洗": "否",
                     "已识别/清洗文件": "已勾选标准命名，最终计算时校验",
                     "缺失文件": "不适用",
                     "是否可计算": "待最终计算校验",
@@ -1093,7 +1103,8 @@ def sample_completeness_rows_v2(
         rows.append(
             {
                 "样本": f"样本{sample}",
-                "无需清洗": "否",
+                "此样本已是标准命名": False,
+                "是否需要清洗": "是",
                 "已识别/清洗文件": "、".join(sorted(files)) or "-",
                 "缺失文件": "、".join(missing) or "完整",
                 "是否可计算": "是" if not missing else "否",
@@ -1961,15 +1972,17 @@ with work_col:
                             st.error(deepseek_status.get("message"))
 
                 params = current_evidence_params()
-                sample_total_col, sample_col, order_col = st.columns(3)
+                st.session_state["cleanup_sample_count"] = evidence_sample_count()
+                sample_total_col, sample_col = st.columns(2)
                 with sample_total_col:
                     cleanup_sample_count = st.number_input(
                         "样本总数",
                         min_value=1,
                         max_value=50,
-                        value=int(st.session_state.get("cleanup_sample_count", 1)),
+                        value=evidence_sample_count(),
                         step=1,
                         key="cleanup_sample_count",
+                        disabled=True,
                     )
                 with sample_col:
                     cleanup_sample_no = st.selectbox(
@@ -1979,47 +1992,38 @@ with work_col:
                         key="cleanup_sample_no_select",
                     )
                 params = current_evidence_params(cleanup_sample_no)
-                with order_col:
-                    cleanup_order_id = st.text_input(
-                        "订单编号",
-                        value=params.get("order_id") or "",
-                        key=f"cleanup_order_id_{cleanup_sample_no}",
-                        placeholder="例如 11000437",
-                    )
-                skip_rows = [
-                    {
-                        "样本": str(index),
-                        "此样本已是标准命名，无需清洗": str(index) in set(st.session_state.get("skip_cleanup_samples") or []),
-                    }
-                    for index in range(1, int(cleanup_sample_count) + 1)
-                ]
-                edited_skip_rows = st.data_editor(
-                    skip_rows,
-                    use_container_width=True,
-                    hide_index=True,
-                    key="skip_cleanup_samples_editor",
-                    column_config={
-                        "样本": st.column_config.TextColumn("样本", disabled=True),
-                        "此样本已是标准命名，无需清洗": st.column_config.CheckboxColumn(
-                            "此样本已是标准命名，无需清洗"
-                        ),
-                    },
-                )
-                skip_cleanup_samples = {
-                    str(row.get("样本"))
-                    for row in (edited_skip_rows or [])
-                    if row.get("此样本已是标准命名，无需清洗")
-                }
-                st.session_state["skip_cleanup_samples"] = sorted(
-                    skip_cleanup_samples,
-                    key=lambda value: int(value) if str(value).isdigit() else str(value),
-                )
+                cleanup_order_id = params.get("order_id") or ""
+                skip_cleanup_samples = set(st.session_state.get("skip_cleanup_samples") or [])
                 completeness = sample_completeness_rows_v2(
                     int(cleanup_sample_count),
                     st.session_state.get("filename_cleanup_results") or [],
                     skip_cleanup_samples,
                 )
-                st.dataframe(completeness, use_container_width=True, hide_index=True)
+                edited_completeness = st.data_editor(
+                    completeness,
+                    use_container_width=True,
+                    hide_index=True,
+                    key="sample_completeness_editor",
+                    column_config={
+                        "此样本已是标准命名": st.column_config.CheckboxColumn(
+                            "此样本已是标准命名"
+                        ),
+                        "样本": st.column_config.TextColumn("样本", disabled=True),
+                        "是否需要清洗": st.column_config.TextColumn("是否需要清洗", disabled=True),
+                        "已识别/清洗文件": st.column_config.TextColumn("已识别/清洗文件", disabled=True),
+                        "缺失文件": st.column_config.TextColumn("缺失文件", disabled=True),
+                        "是否可计算": st.column_config.TextColumn("是否可计算", disabled=True),
+                    },
+                )
+                skip_cleanup_samples = {
+                    str(row.get("样本") or "").replace("样本", "")
+                    for row in (edited_completeness or [])
+                    if row.get("此样本已是标准命名")
+                }
+                st.session_state["skip_cleanup_samples"] = sorted(
+                    skip_cleanup_samples,
+                    key=lambda value: int(value) if str(value).isdigit() else str(value),
+                )
                 if skip_cleanup_samples:
                     st.success(
                         "已按样本标记无需文件名清洗。被勾选的样本会在最终计算上传时继续校验文件命名和完整性。"
