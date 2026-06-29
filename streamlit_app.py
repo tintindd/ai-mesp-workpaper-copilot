@@ -1994,36 +1994,31 @@ with work_col:
                 params = current_evidence_params(cleanup_sample_no)
                 cleanup_order_id = params.get("order_id") or ""
                 skip_cleanup_samples = set(st.session_state.get("skip_cleanup_samples") or [])
+                st.markdown("##### ?????????")
+                checkbox_cols = st.columns(min(int(cleanup_sample_count), 4))
+                updated_skip_samples = set()
+                for sample_index in range(1, int(cleanup_sample_count) + 1):
+                    sample_text = str(sample_index)
+                    with checkbox_cols[(sample_index - 1) % len(checkbox_cols)]:
+                        checked = st.checkbox(
+                            f"??{sample_text}",
+                            value=sample_text in skip_cleanup_samples,
+                            key=f"skip_cleanup_sample_{sample_text}",
+                            help="??????????????????????????",
+                        )
+                    if checked:
+                        updated_skip_samples.add(sample_text)
+                skip_cleanup_samples = updated_skip_samples
+                st.session_state["skip_cleanup_samples"] = sorted(
+                    skip_cleanup_samples,
+                    key=lambda value: int(value) if str(value).isdigit() else str(value),
+                )
                 completeness = sample_completeness_rows_v2(
                     int(cleanup_sample_count),
                     st.session_state.get("filename_cleanup_results") or [],
                     skip_cleanup_samples,
                 )
-                edited_completeness = st.data_editor(
-                    completeness,
-                    use_container_width=True,
-                    hide_index=True,
-                    key="sample_completeness_editor",
-                    column_config={
-                        "此样本已是标准命名": st.column_config.CheckboxColumn(
-                            "此样本已是标准命名"
-                        ),
-                        "样本": st.column_config.TextColumn("样本", disabled=True),
-                        "是否需要清洗": st.column_config.TextColumn("是否需要清洗", disabled=True),
-                        "已识别/清洗文件": st.column_config.TextColumn("已识别/清洗文件", disabled=True),
-                        "缺失文件": st.column_config.TextColumn("缺失文件", disabled=True),
-                        "是否可计算": st.column_config.TextColumn("是否可计算", disabled=True),
-                    },
-                )
-                skip_cleanup_samples = {
-                    str(row.get("样本") or "").replace("样本", "")
-                    for row in (edited_completeness or [])
-                    if row.get("此样本已是标准命名")
-                }
-                st.session_state["skip_cleanup_samples"] = sorted(
-                    skip_cleanup_samples,
-                    key=lambda value: int(value) if str(value).isdigit() else str(value),
-                )
+                st.dataframe(completeness, use_container_width=True, hide_index=True)
                 if skip_cleanup_samples:
                     st.success(
                         "已按样本标记无需文件名清洗。被勾选的样本会在最终计算上传时继续校验文件命名和完整性。"
