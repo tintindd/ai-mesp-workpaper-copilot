@@ -1048,6 +1048,60 @@ def sample_completeness_rows(sample_count: int, cleanup_results: list[dict]) -> 
     return rows
 
 
+def sample_completeness_rows_v2(
+    sample_count: int,
+    cleanup_results: list[dict],
+    skip_cleanup_samples: set[str] | None = None,
+) -> list[dict]:
+    skip_cleanup_samples = skip_cleanup_samples or set()
+    by_sample: dict[str, set[str]] = {str(index): set() for index in range(1, sample_count + 1)}
+    for item in cleanup_results:
+        sample = str(item.get("sample_no") or "").strip()
+        report = str(item.get("report_type") or "").strip()
+        kind = str(item.get("evidence_kind") or "").strip()
+        if not sample or not report:
+            continue
+        if "表" in kind:
+            normalized_kind = "表格"
+        elif "截" in kind or "图" in kind:
+            normalized_kind = "截图"
+        else:
+            normalized_kind = kind or "未知"
+        by_sample.setdefault(sample, set()).add(f"{report}-{normalized_kind}")
+
+    rows = []
+    required_reports = ["CO03", "KSBT", "3611", "CKM3"]
+    required_kinds = ["表格", "截图"]
+    for sample, files in sorted(by_sample.items(), key=lambda pair: int(pair[0]) if pair[0].isdigit() else 999):
+        if sample in skip_cleanup_samples:
+            rows.append(
+                {
+                    "样本": f"样本{sample}",
+                    "无需清洗": "是",
+                    "已识别/清洗文件": "已勾选标准命名，最终计算时校验",
+                    "缺失文件": "不适用",
+                    "是否可计算": "待最终计算校验",
+                }
+            )
+            continue
+        missing = []
+        for report in required_reports:
+            for kind in required_kinds:
+                expected = f"{report}-{kind}"
+                if expected not in files:
+                    missing.append(f"{report}{kind}")
+        rows.append(
+            {
+                "样本": f"样本{sample}",
+                "无需清洗": "否",
+                "已识别/清洗文件": "、".join(sorted(files)) or "-",
+                "缺失文件": "、".join(missing) or "完整",
+                "是否可计算": "是" if not missing else "否",
+            }
+        )
+    return rows
+
+
 def run_filename_cleanup_by_bucket(
     sample_no: str,
     order_id: str,
@@ -1932,17 +1986,44 @@ with work_col:
                         key=f"cleanup_order_id_{cleanup_sample_no}",
                         placeholder="例如 11000437",
                     )
-                skip_cleanup = st.checkbox(
-                    "此批文件已是标准命名，不需要文件名清洗",
-                    key="skip_filename_cleanup",
+                skip_rows = [
+                    {
+                        "样本": str(index),
+                        "此样本已是标准命名，无需清洗": str(index) in set(st.session_state.get("skip_cleanup_samples") or []),
+                    }
+                    for index in range(1, int(cleanup_sample_count) + 1)
+                ]
+                edited_skip_rows = st.data_editor(
+                    skip_rows,
+                    use_container_width=True,
+                    hide_index=True,
+                    key="skip_cleanup_samples_editor",
+                    column_config={
+                        "样本": st.column_config.TextColumn("样本", disabled=True),
+                        "此样本已是标准命名，无需清洗": st.column_config.CheckboxColumn(
+                            "此样本已是标准命名，无需清洗"
+                        ),
+                    },
                 )
-                completeness = sample_completeness_rows(
+                skip_cleanup_samples = {
+                    str(row.get("样本"))
+                    for row in (edited_skip_rows or [])
+                    if row.get("此样本已是标准命名，无需清洗")
+                }
+                st.session_state["skip_cleanup_samples"] = sorted(
+                    skip_cleanup_samples,
+                    key=lambda value: int(value) if str(value).isdigit() else str(value),
+                )
+                completeness = sample_completeness_rows_v2(
                     int(cleanup_sample_count),
                     st.session_state.get("filename_cleanup_results") or [],
+                    skip_cleanup_samples,
                 )
                 st.dataframe(completeness, use_container_width=True, hide_index=True)
-                if skip_cleanup:
-                    st.success("已标记为无需文件名清洗。请进入“计算结果”上传标准格式样本文件或 zip 包进行计算。")
+                if skip_cleanup_samples:
+                    st.success(
+                        "已按样本标记无需文件名清洗。被勾选的样本会在最终计算上传时继续校验文件命名和完整性。"
+                    )
                 st.markdown(
                     """
                     <div class="upload-rules">
