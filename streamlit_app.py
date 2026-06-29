@@ -879,6 +879,31 @@ def current_evidence_params(sample_no: str | None = None) -> dict:
     return _blank_evidence_params(selected_sample)
 
 
+def apply_evidence_params_editor(edited_rows: list[dict]) -> None:
+    deleted_samples = {
+        str(row.get("sample_no") or "").strip()
+        for row in edited_rows or []
+        if row.get("删除")
+    }
+    kept_rows = [
+        _normalize_evidence_params(row)
+        for row in (edited_rows or [])
+        if not row.get("删除") and any(str(row.get(key) or "").strip() for key in PARAMETER_COLUMNS)
+    ]
+    st.session_state["evidence_params_table"] = kept_rows or [_blank_evidence_params("1")]
+    if deleted_samples:
+        st.session_state["filename_cleanup_results"] = [
+            item
+            for item in (st.session_state.get("filename_cleanup_results") or [])
+            if str(item.get("sample_no") or "").strip() not in deleted_samples
+        ]
+        st.session_state["standard_named_zip_bytes"] = build_standard_named_zip_bytes(
+            st.session_state["filename_cleanup_results"]
+        )
+        if st.session_state.get("current_param_sample_no") in deleted_samples:
+            st.session_state["current_param_sample_no"] = st.session_state["evidence_params_table"][0]["sample_no"]
+
+
 def evidence_sample_count() -> int:
     numeric_samples = []
     for row in evidence_params_table():
@@ -1193,6 +1218,22 @@ def run_filename_cleanup_by_bucket(
         param_material_id = str(params.get("material_id") or "").strip()
         param_cost_center = str(params.get("cost_center") or "").strip()
         total_files = sum(len(files or []) for files in bucket_files.values())
+        missing_param_messages = []
+        if total_files and not order_id:
+            missing_param_messages.append("订单编号")
+        if bucket_files.get("CO03") and not param_product_id and not any(is_image_file(item.name) for item in bucket_files.get("CO03") or []):
+            missing_param_messages.append("CO03物料编码")
+        if bucket_files.get("CKM3") and not param_material_id and not any(is_image_file(item.name) for item in bucket_files.get("CKM3") or []):
+            missing_param_messages.append("CKM3物料ID")
+        if bucket_files.get("KSBT") and not param_cost_center and not any(is_image_file(item.name) for item in bucket_files.get("KSBT") or []):
+            missing_param_messages.append("KSBT成本中心")
+        if missing_param_messages:
+            st.session_state["filename_cleanup_error"] = (
+                "文件名清洗缺少关键参数："
+                + "、".join(missing_param_messages)
+                + "。请先在“参数获取”中进行OCR识别，或使用手工输入补充后再运行文件名清洗。"
+            )
+            return
         total_steps = max(total_files + 3, 1)
         step_index = 0
         progress_bar = st.progress(0, text="准备文件名清洗任务...")
@@ -1907,13 +1948,18 @@ with work_col:
                     st.error(st.session_state["parameter_ocr_error"])
 
             st.markdown("#### 参数识别台账")
+            evidence_editor_rows = [
+                {"删除": False, **row}
+                for row in evidence_params_table()
+            ]
             edited_params = st.data_editor(
-                evidence_params_table(),
+                evidence_editor_rows,
                 use_container_width=True,
                 hide_index=True,
                 num_rows="dynamic",
                 key="evidence_params_editor",
                 column_config={
+                    "删除": st.column_config.CheckboxColumn("删除"),
                     "sample_no": st.column_config.TextColumn("样本编号", required=True),
                     "order_id": st.column_config.TextColumn("订单编号"),
                     "product_id": st.column_config.TextColumn("CO03物料编码"),
@@ -1921,11 +1967,7 @@ with work_col:
                     "cost_center": st.column_config.TextColumn("KSBT成本中心"),
                 },
             )
-            st.session_state["evidence_params_table"] = [
-                _normalize_evidence_params(row)
-                for row in (edited_params or [])
-                if any(str(row.get(key) or "").strip() for key in PARAMETER_COLUMNS)
-            ] or [_blank_evidence_params("1")]
+            apply_evidence_params_editor(edited_params or [])
             params = current_evidence_params()
 
             preview_items = st.session_state.get("parameter_ocr_previews") or []
@@ -2087,6 +2129,16 @@ with work_col:
                         )
 
                 total_cleanup_files = sum(len(files or []) for files in bucket_files.values())
+                param_status = {
+                    "订单编号": params.get("order_id") or "未填写",
+                    "CO03物料编码": params.get("product_id") or "未填写",
+                    "CKM3物料ID": params.get("material_id") or "未填写",
+                    "KSBT成本中心": params.get("cost_center") or "未填写",
+                }
+                st.caption(
+                    "当前样本关键参数："
+                    + "；".join(f"{key}={value}" for key, value in param_status.items())
+                )
                 st.button(
                     "运行文件名清洗",
                     disabled=total_cleanup_files == 0,
