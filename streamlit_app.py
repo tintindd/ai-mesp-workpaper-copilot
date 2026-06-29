@@ -1994,17 +1994,17 @@ with work_col:
                 params = current_evidence_params(cleanup_sample_no)
                 cleanup_order_id = params.get("order_id") or ""
                 skip_cleanup_samples = set(st.session_state.get("skip_cleanup_samples") or [])
-                st.markdown("##### ?????????")
+                st.markdown("##### 已是标准命名的样本")
                 checkbox_cols = st.columns(min(int(cleanup_sample_count), 4))
                 updated_skip_samples = set()
                 for sample_index in range(1, int(cleanup_sample_count) + 1):
                     sample_text = str(sample_index)
                     with checkbox_cols[(sample_index - 1) % len(checkbox_cols)]:
                         checked = st.checkbox(
-                            f"??{sample_text}",
+                            f"样本{sample_text}",
                             value=sample_text in skip_cleanup_samples,
                             key=f"skip_cleanup_sample_{sample_text}",
-                            help="??????????????????????????",
+                            help="勾选表示该样本文件已是标准命名，无需进入文件名清洗。",
                         )
                     if checked:
                         updated_skip_samples.add(sample_text)
