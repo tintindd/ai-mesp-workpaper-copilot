@@ -808,17 +808,75 @@ def build_standard_named_zip_bytes(cleanup_results: list[dict]) -> bytes:
     return output.getvalue()
 
 
-def current_evidence_params() -> dict:
-    return st.session_state.setdefault(
-        "evidence_params",
-        {
-            "sample_no": "1",
-            "order_id": "",
-            "product_id": "",
-            "material_id": "",
-            "cost_center": "",
-        },
+PARAMETER_COLUMNS = ["sample_no", "order_id", "product_id", "material_id", "cost_center"]
+
+
+def _blank_evidence_params(sample_no: str = "1") -> dict:
+    return {
+        "sample_no": str(sample_no or "1").strip(),
+        "order_id": "",
+        "product_id": "",
+        "material_id": "",
+        "cost_center": "",
+    }
+
+
+def _normalize_evidence_params(row: dict | None, sample_no: str = "1") -> dict:
+    source = row or {}
+    normalized = _blank_evidence_params(source.get("sample_no") or sample_no)
+    for key in PARAMETER_COLUMNS:
+        normalized[key] = str(source.get(key) or normalized.get(key) or "").strip()
+    normalized["sample_no"] = normalized["sample_no"] or str(sample_no or "1").strip()
+    return normalized
+
+
+def evidence_params_table() -> list[dict]:
+    rows = st.session_state.get("evidence_params_table")
+    if rows is None:
+        legacy = st.session_state.get("evidence_params")
+        rows = [_normalize_evidence_params(legacy)] if legacy else [_blank_evidence_params("1")]
+        st.session_state["evidence_params_table"] = rows
+    cleaned_rows = []
+    seen = set()
+    for row in rows:
+        normalized = _normalize_evidence_params(row)
+        sample_no = normalized["sample_no"] or "1"
+        if sample_no in seen:
+            continue
+        seen.add(sample_no)
+        cleaned_rows.append(normalized)
+    if not cleaned_rows:
+        cleaned_rows = [_blank_evidence_params("1")]
+    st.session_state["evidence_params_table"] = sorted(
+        cleaned_rows,
+        key=lambda item: int(item["sample_no"]) if str(item["sample_no"]).isdigit() else str(item["sample_no"]),
     )
+    return st.session_state["evidence_params_table"]
+
+
+def upsert_evidence_params(params: dict) -> None:
+    normalized = _normalize_evidence_params(params)
+    rows = [row for row in evidence_params_table() if str(row.get("sample_no")) != normalized["sample_no"]]
+    rows.append(normalized)
+    st.session_state["evidence_params_table"] = sorted(
+        rows,
+        key=lambda item: int(item["sample_no"]) if str(item["sample_no"]).isdigit() else str(item["sample_no"]),
+    )
+    st.session_state["evidence_params"] = normalized
+    st.session_state["current_param_sample_no"] = normalized["sample_no"]
+
+
+def current_evidence_params(sample_no: str | None = None) -> dict:
+    selected_sample = str(
+        sample_no
+        or st.session_state.get("current_param_sample_no")
+        or st.session_state.get("cleanup_sample_no_select")
+        or "1"
+    ).strip()
+    for row in evidence_params_table():
+        if str(row.get("sample_no") or "").strip() == selected_sample:
+            return _normalize_evidence_params(row, selected_sample)
+    return _blank_evidence_params(selected_sample)
 
 
 def run_parameter_ocr(sample_no: str, co03_file, ckm3_file, ksbt_file) -> None:
@@ -876,7 +934,7 @@ def run_parameter_ocr(sample_no: str, co03_file, ckm3_file, ksbt_file) -> None:
 
         progress.progress(1.0, text="参数 OCR 识别完成")
         status.caption("参数 OCR 识别完成")
-        st.session_state["evidence_params"] = params
+        upsert_evidence_params(params)
         st.session_state["parameter_ocr_previews"] = preview_items
         st.session_state["parameter_ocr_confirmed"] = False
     except Exception as exc:
@@ -884,13 +942,13 @@ def run_parameter_ocr(sample_no: str, co03_file, ckm3_file, ksbt_file) -> None:
 
 
 def apply_manual_params(sample_no: str, order_id: str, product_id: str, material_id: str, cost_center: str) -> None:
-    st.session_state["evidence_params"] = {
+    upsert_evidence_params({
         "sample_no": str(sample_no or "1").strip(),
         "order_id": str(order_id or "").strip(),
         "product_id": str(product_id or "").strip(),
         "material_id": str(material_id or "").strip(),
         "cost_center": str(cost_center or "").strip(),
-    }
+    })
     st.session_state["parameter_ocr_confirmed"] = True
 
 
@@ -1001,7 +1059,7 @@ def run_filename_cleanup_by_bucket(
 
     results = []
     try:
-        params = current_evidence_params()
+        params = current_evidence_params(sample_no)
         sample_no = str(sample_no or params.get("sample_no") or "1").strip()
         order_id = str(order_id or params.get("order_id") or "").strip()
         param_product_id = str(params.get("product_id") or "").strip()
@@ -1721,20 +1779,27 @@ with work_col:
                 if st.session_state.get("parameter_ocr_error"):
                     st.error(st.session_state["parameter_ocr_error"])
 
-            params = current_evidence_params()
-            st.dataframe(
-                [
-                    {
-                        "样本编号": params.get("sample_no") or "-",
-                        "订单编号": params.get("order_id") or "-",
-                        "CO03物料编码": params.get("product_id") or "-",
-                        "CKM3物料ID": params.get("material_id") or "-",
-                        "KSBT成本中心": params.get("cost_center") or "-",
-                    }
-                ],
+            st.markdown("#### 参数识别台账")
+            edited_params = st.data_editor(
+                evidence_params_table(),
                 use_container_width=True,
                 hide_index=True,
+                num_rows="dynamic",
+                key="evidence_params_editor",
+                column_config={
+                    "sample_no": st.column_config.TextColumn("样本编号", required=True),
+                    "order_id": st.column_config.TextColumn("订单编号"),
+                    "product_id": st.column_config.TextColumn("CO03物料编码"),
+                    "material_id": st.column_config.TextColumn("CKM3物料ID"),
+                    "cost_center": st.column_config.TextColumn("KSBT成本中心"),
+                },
             )
+            st.session_state["evidence_params_table"] = [
+                _normalize_evidence_params(row)
+                for row in (edited_params or [])
+                if any(str(row.get(key) or "").strip() for key in PARAMETER_COLUMNS)
+            ] or [_blank_evidence_params("1")]
+            params = current_evidence_params()
 
             preview_items = st.session_state.get("parameter_ocr_previews") or []
             if preview_items:
@@ -1859,11 +1924,12 @@ with work_col:
                         index=max(min(int(params.get("sample_no") or 1), int(cleanup_sample_count)) - 1, 0),
                         key="cleanup_sample_no_select",
                     )
+                params = current_evidence_params(cleanup_sample_no)
                 with order_col:
                     cleanup_order_id = st.text_input(
                         "订单编号",
                         value=params.get("order_id") or "",
-                        key="cleanup_order_id",
+                        key=f"cleanup_order_id_{cleanup_sample_no}",
                         placeholder="例如 11000437",
                     )
                 skip_cleanup = st.checkbox(
