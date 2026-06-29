@@ -879,29 +879,33 @@ def current_evidence_params(sample_no: str | None = None) -> dict:
     return _blank_evidence_params(selected_sample)
 
 
+def delete_evidence_samples(samples: set[str]) -> None:
+    if not samples:
+        return
+    st.session_state["evidence_params_table"] = [
+        row
+        for row in evidence_params_table()
+        if str(row.get("sample_no") or "").strip() not in samples
+    ] or [_blank_evidence_params("1")]
+    st.session_state["filename_cleanup_results"] = [
+        item
+        for item in (st.session_state.get("filename_cleanup_results") or [])
+        if str(item.get("sample_no") or "").strip() not in samples
+    ]
+    st.session_state["standard_named_zip_bytes"] = build_standard_named_zip_bytes(
+        st.session_state["filename_cleanup_results"]
+    )
+    if st.session_state.get("current_param_sample_no") in samples:
+        st.session_state["current_param_sample_no"] = st.session_state["evidence_params_table"][0]["sample_no"]
+
+
 def apply_evidence_params_editor(edited_rows: list[dict]) -> None:
-    deleted_samples = {
-        str(row.get("sample_no") or "").strip()
-        for row in edited_rows or []
-        if row.get("删除")
-    }
     kept_rows = [
         _normalize_evidence_params(row)
         for row in (edited_rows or [])
-        if not row.get("删除") and any(str(row.get(key) or "").strip() for key in PARAMETER_COLUMNS)
+        if any(str(row.get(key) or "").strip() for key in PARAMETER_COLUMNS)
     ]
     st.session_state["evidence_params_table"] = kept_rows or [_blank_evidence_params("1")]
-    if deleted_samples:
-        st.session_state["filename_cleanup_results"] = [
-            item
-            for item in (st.session_state.get("filename_cleanup_results") or [])
-            if str(item.get("sample_no") or "").strip() not in deleted_samples
-        ]
-        st.session_state["standard_named_zip_bytes"] = build_standard_named_zip_bytes(
-            st.session_state["filename_cleanup_results"]
-        )
-        if st.session_state.get("current_param_sample_no") in deleted_samples:
-            st.session_state["current_param_sample_no"] = st.session_state["evidence_params_table"][0]["sample_no"]
 
 
 def evidence_sample_count() -> int:
@@ -1948,18 +1952,13 @@ with work_col:
                     st.error(st.session_state["parameter_ocr_error"])
 
             st.markdown("#### 参数识别台账")
-            evidence_editor_rows = [
-                {"删除": False, **row}
-                for row in evidence_params_table()
-            ]
             edited_params = st.data_editor(
-                evidence_editor_rows,
+                evidence_params_table(),
                 use_container_width=True,
                 hide_index=True,
                 num_rows="dynamic",
                 key="evidence_params_editor",
                 column_config={
-                    "删除": st.column_config.CheckboxColumn("删除"),
                     "sample_no": st.column_config.TextColumn("样本编号", required=True),
                     "order_id": st.column_config.TextColumn("订单编号"),
                     "product_id": st.column_config.TextColumn("CO03物料编码"),
@@ -1968,6 +1967,23 @@ with work_col:
                 },
             )
             apply_evidence_params_editor(edited_params or [])
+            sample_delete_options = [row["sample_no"] for row in evidence_params_table()]
+            selected_samples_to_delete = st.multiselect(
+                "选择要删除的样本",
+                sample_delete_options,
+                format_func=lambda sample: f"样本{sample}",
+                key="selected_samples_to_delete",
+            )
+            if selected_samples_to_delete:
+                st.warning(
+                    "已选择删除样本："
+                    + "、".join(f"样本{sample}" for sample in selected_samples_to_delete)
+                    + "。点击下方按钮后才会删除，并同步清理这些样本的已清洗/补充文件。"
+                )
+                if st.button("确认删除选中样本", type="secondary"):
+                    delete_evidence_samples(set(selected_samples_to_delete))
+                    st.session_state["selected_samples_to_delete"] = []
+                    st.rerun()
             params = current_evidence_params()
 
             preview_items = st.session_state.get("parameter_ocr_previews") or []
