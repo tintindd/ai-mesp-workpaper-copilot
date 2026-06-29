@@ -810,6 +810,18 @@ def run_filename_cleanup_by_bucket(
 
     results = []
     try:
+        total_files = sum(len(files or []) for files in bucket_files.values())
+        total_steps = max(total_files + 3, 1)
+        step_index = 0
+        progress_bar = st.progress(0, text="准备文件名清洗任务...")
+        progress_status = st.empty()
+
+        def update_progress(message: str) -> None:
+            nonlocal step_index
+            step_index += 1
+            progress_bar.progress(min(step_index / total_steps, 1.0), text=message)
+            progress_status.caption(message)
+
         with tempfile.TemporaryDirectory(prefix="mesp_filename_check_") as temp:
             temp_dir = Path(temp)
             detected_co03_product_id = ""
@@ -818,6 +830,7 @@ def run_filename_cleanup_by_bucket(
                 for uploaded_file in bucket_files.get("CO03") or []:
                     if is_image_file(uploaded_file.name):
                         if recognize_co03_product_id:
+                            update_progress(f"正在识别 CO03 物料编码：{uploaded_file.name}")
                             detected_co03_product_id = recognize_co03_product_id(
                                 uploaded_file.name,
                                 uploaded_file.getvalue(),
@@ -828,6 +841,7 @@ def run_filename_cleanup_by_bucket(
                 for uploaded_file in bucket_files.get("CKM3") or []:
                     if is_image_file(uploaded_file.name):
                         if recognize_ckm3_material_id:
+                            update_progress(f"正在识别 CKM3 物料ID：{uploaded_file.name}")
                             detected_ckm3_material_id = recognize_ckm3_material_id(
                                 uploaded_file.name,
                                 uploaded_file.getvalue(),
@@ -838,6 +852,7 @@ def run_filename_cleanup_by_bucket(
 
             for report, files in bucket_files.items():
                 for uploaded_file in files or []:
+                    update_progress(f"正在清洗 {report} 文件名：{uploaded_file.name}")
                     file_bytes = uploaded_file.getvalue()
                     if deepseek_config:
                         cleaned = normalize_filename_with_deepseek(uploaded_file.name, deepseek_config)
@@ -858,6 +873,7 @@ def run_filename_cleanup_by_bucket(
                             and is_image_file(uploaded_file.name)
                             and online_ocr_available(online_ocr_config)
                         ):
+                            progress_status.caption(f"正在补充识别 CKM3 物料ID：{uploaded_file.name}")
                             detected_material_id = recognize_ckm3_material_id(
                                 uploaded_file.name,
                                 file_bytes,
@@ -872,6 +888,7 @@ def run_filename_cleanup_by_bucket(
                             and is_image_file(uploaded_file.name)
                             and online_ocr_available(online_ocr_config)
                         ):
+                            progress_status.caption(f"正在补充识别 CO03 物料编码：{uploaded_file.name}")
                             detected_product_id = recognize_co03_product_id(
                                 uploaded_file.name,
                                 file_bytes,
@@ -907,6 +924,8 @@ def run_filename_cleanup_by_bucket(
                     cleaned["missing_field_labels"] = display_missing_fields(cleaned["report_type"], missing_fields)
                     cleaned["source"] = "DeepSeek 文件名清洗 + Excel 字段检查"
                     results.append(cleaned)
+        progress_bar.progress(1.0, text="文件名清洗完成")
+        progress_status.caption("文件名清洗完成")
         st.session_state["filename_cleanup_results"] = results
         st.session_state["standard_named_zip_bytes"] = build_standard_named_zip_bytes(results)
     except Exception as exc:
@@ -927,7 +946,12 @@ def run_ckm3_ocr_to_excel(uploaded_files) -> None:
 
     results = []
     try:
-        for uploaded_file in image_files:
+        progress_bar = st.progress(0, text="准备 CKM3 OCR 识别...")
+        progress_status = st.empty()
+        total = max(len(image_files), 1)
+        for index, uploaded_file in enumerate(image_files, start=1):
+            progress_bar.progress((index - 1) / total, text=f"正在识别 CKM3 截图 {index}/{total}：{uploaded_file.name}")
+            progress_status.caption(f"正在识别 CKM3 截图 {index}/{total}：{uploaded_file.name}")
             uploaded_file.seek(0)
             ocr_result = recognize_uploaded_image(uploaded_file, online_ocr_config)
             ocr_text = ocr_result.get("text") or ""
@@ -953,6 +977,8 @@ def run_ckm3_ocr_to_excel(uploaded_files) -> None:
                     "ocr_text": ocr_text,
                 }
             )
+        progress_bar.progress(1.0, text="CKM3 OCR 识别完成")
+        progress_status.caption("CKM3 OCR 识别完成")
         st.session_state["ckm3_ocr_excels"] = results
     except Exception as exc:
         st.session_state["ckm3_ocr_error"] = str(exc)
@@ -975,7 +1001,12 @@ def run_ocr_cleanup(uploaded_files) -> None:
 
     results = []
     try:
-        for uploaded_file in image_files:
+        progress_bar = st.progress(0, text="准备 OCR 文本清洗...")
+        progress_status = st.empty()
+        total = max(len(image_files), 1)
+        for index, uploaded_file in enumerate(image_files, start=1):
+            progress_bar.progress((index - 1) / total, text=f"正在 OCR 清洗 {index}/{total}：{uploaded_file.name}")
+            progress_status.caption(f"正在 OCR 清洗 {index}/{total}：{uploaded_file.name}")
             ocr_result = recognize_uploaded_image(uploaded_file, online_ocr_config)
             cleaned = clean_ocr_text_with_deepseek(
                 uploaded_file.name,
@@ -990,6 +1021,8 @@ def run_ocr_cleanup(uploaded_files) -> None:
                     "cleaned": cleaned,
                 }
             )
+        progress_bar.progress(1.0, text="OCR 文本清洗完成")
+        progress_status.caption("OCR 文本清洗完成")
         st.session_state["ocr_cleanup_results"] = results
     except Exception as exc:
         st.session_state["ocr_cleanup_error"] = str(exc)
