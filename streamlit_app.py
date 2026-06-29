@@ -885,6 +885,10 @@ def evidence_sample_count() -> int:
         sample_no = str(row.get("sample_no") or "").strip()
         if sample_no.isdigit():
             numeric_samples.append(int(sample_no))
+    for item in st.session_state.get("filename_cleanup_results") or []:
+        sample_no = str(item.get("sample_no") or "").strip()
+        if sample_no.isdigit():
+            numeric_samples.append(int(sample_no))
     return max([1, *numeric_samples])
 
 
@@ -1060,9 +1064,7 @@ def sample_completeness_rows(sample_count: int, cleanup_results: list[dict]) -> 
 def sample_completeness_rows_v2(
     sample_count: int,
     cleanup_results: list[dict],
-    skip_cleanup_samples: set[str] | None = None,
 ) -> list[dict]:
-    skip_cleanup_samples = skip_cleanup_samples or set()
     by_sample: dict[str, set[str]] = {str(index): set() for index in range(1, sample_count + 1)}
     for item in cleanup_results:
         sample = str(item.get("sample_no") or "").strip()
@@ -1082,18 +1084,6 @@ def sample_completeness_rows_v2(
     required_reports = ["CO03", "KSBT", "3611", "CKM3"]
     required_kinds = ["表格", "截图"]
     for sample, files in sorted(by_sample.items(), key=lambda pair: int(pair[0]) if pair[0].isdigit() else 999):
-        if sample in skip_cleanup_samples:
-            rows.append(
-                {
-                    "样本": f"样本{sample}",
-                    "此样本已是标准命名": True,
-                    "是否需要清洗": "否",
-                    "已识别/清洗文件": "已勾选标准命名，最终计算时校验",
-                    "缺失文件": "不适用",
-                    "是否可计算": "待最终计算校验",
-                }
-            )
-            continue
         missing = []
         for report in required_reports:
             for kind in required_kinds:
@@ -1103,14 +1093,86 @@ def sample_completeness_rows_v2(
         rows.append(
             {
                 "样本": f"样本{sample}",
-                "此样本已是标准命名": False,
-                "是否需要清洗": "是",
                 "已识别/清洗文件": "、".join(sorted(files)) or "-",
                 "缺失文件": "、".join(missing) or "完整",
                 "是否可计算": "是" if not missing else "否",
             }
         )
     return rows
+
+
+def add_missing_support_file(sample_no: str, report: str, evidence_kind: str, uploaded_file) -> None:
+    st.session_state.pop("missing_support_file_error", None)
+    if not uploaded_file:
+        st.session_state["missing_support_file_error"] = "请先选择要补充上传的文件。"
+        return
+
+    params = current_evidence_params(sample_no)
+    order_id = str(params.get("order_id") or "").strip()
+    product_id = str(params.get("product_id") or "").strip()
+    material_id = str(params.get("material_id") or "").strip()
+    cost_center = str(params.get("cost_center") or "").strip()
+    file_bytes = uploaded_file.getvalue()
+    extension = Path(uploaded_file.name).suffix.lower().lstrip(".")
+    expected_kind = _cleanup_evidence_kind(uploaded_file.name)
+    if expected_kind in {"表格", "截图"} and expected_kind != evidence_kind:
+        st.session_state["missing_support_file_error"] = (
+            f"上传文件类型与选择不一致：当前选择为{evidence_kind}，但文件更像是{expected_kind}。"
+        )
+        return
+    standard_filename = _standard_cleanup_filename(
+        sample_no=sample_no,
+        order_id=order_id,
+        material_id=material_id,
+        product_id=product_id,
+        cost_center=cost_center,
+        report=report,
+        evidence_kind=evidence_kind,
+        extension=extension,
+    )
+
+    field_status = "非表格文件，未检查字段"
+    missing_fields = []
+    if extension in {"xlsx", "xlsm", "csv"}:
+        with tempfile.TemporaryDirectory(prefix="mesp_missing_file_") as temp:
+            temp_path = Path(temp) / Path(uploaded_file.name).name
+            temp_path.write_bytes(file_bytes)
+            workbook_result = analyze_workbook(temp_path, report)
+            missing_fields = workbook_result.get("missing_fields") or []
+            field_status = "完整" if not missing_fields else "缺失字段"
+
+    new_item = {
+        "上传位置": report,
+        "source_file": uploaded_file.name,
+        "sample_no": str(sample_no),
+        "order_id": order_id or "待补充",
+        "product_id": product_id,
+        "material_id": material_id,
+        "cost_center": cost_center,
+        "report_type": report,
+        "evidence_kind": evidence_kind,
+        "extension": extension,
+        "standard_filename": standard_filename,
+        "field_status": field_status,
+        "missing_fields": missing_fields,
+        "missing_field_labels": display_missing_fields(report, missing_fields),
+        "file_bytes": file_bytes,
+        "source": "计算结果补充上传",
+    }
+    existing = st.session_state.get("filename_cleanup_results") or []
+    filtered = [
+        item
+        for item in existing
+        if not (
+            str(item.get("sample_no") or "") == str(sample_no)
+            and str(item.get("report_type") or "") == report
+            and str(item.get("evidence_kind") or "") == evidence_kind
+        )
+    ]
+    st.session_state["filename_cleanup_results"] = [*filtered, new_item]
+    st.session_state["standard_named_zip_bytes"] = build_standard_named_zip_bytes(
+        st.session_state["filename_cleanup_results"]
+    )
 
 
 def run_filename_cleanup_by_bucket(
@@ -1993,36 +2055,12 @@ with work_col:
                     )
                 params = current_evidence_params(cleanup_sample_no)
                 cleanup_order_id = params.get("order_id") or ""
-                skip_cleanup_samples = set(st.session_state.get("skip_cleanup_samples") or [])
-                st.markdown("##### 已是标准命名的样本")
-                checkbox_cols = st.columns(min(int(cleanup_sample_count), 4))
-                updated_skip_samples = set()
-                for sample_index in range(1, int(cleanup_sample_count) + 1):
-                    sample_text = str(sample_index)
-                    with checkbox_cols[(sample_index - 1) % len(checkbox_cols)]:
-                        checked = st.checkbox(
-                            f"样本{sample_text}",
-                            value=sample_text in skip_cleanup_samples,
-                            key=f"skip_cleanup_sample_{sample_text}",
-                            help="勾选表示该样本文件已是标准命名，无需进入文件名清洗。",
-                        )
-                    if checked:
-                        updated_skip_samples.add(sample_text)
-                skip_cleanup_samples = updated_skip_samples
-                st.session_state["skip_cleanup_samples"] = sorted(
-                    skip_cleanup_samples,
-                    key=lambda value: int(value) if str(value).isdigit() else str(value),
-                )
+                st.markdown("##### 样本文件完整性")
                 completeness = sample_completeness_rows_v2(
                     int(cleanup_sample_count),
                     st.session_state.get("filename_cleanup_results") or [],
-                    skip_cleanup_samples,
                 )
                 st.dataframe(completeness, use_container_width=True, hide_index=True)
-                if skip_cleanup_samples:
-                    st.success(
-                        "已按样本标记无需文件名清洗。被勾选的样本会在最终计算上传时继续校验文件命名和完整性。"
-                    )
                 st.markdown(
                     """
                     <div class="upload-rules">
@@ -2144,6 +2182,67 @@ with work_col:
                     )
 
             with tab_upload:
+                calculation_sample_count = evidence_sample_count()
+                st.markdown("##### 样本文件完整性")
+                st.dataframe(
+                    sample_completeness_rows_v2(
+                        int(calculation_sample_count),
+                        st.session_state.get("filename_cleanup_results") or [],
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                st.markdown("##### 补充缺失文件")
+                missing_cols = st.columns(4)
+                with missing_cols[0]:
+                    missing_sample_no = st.selectbox(
+                        "补充样本",
+                        [str(index) for index in range(1, int(calculation_sample_count) + 1)],
+                        key="missing_file_sample_no",
+                    )
+                with missing_cols[1]:
+                    missing_report = st.selectbox(
+                        "文件类型",
+                        ["CO03", "KSBT", "3611", "CKM3"],
+                        key="missing_file_report",
+                    )
+                with missing_cols[2]:
+                    missing_kind = st.selectbox(
+                        "证据类型",
+                        ["表格", "截图"],
+                        key="missing_file_kind",
+                    )
+                with missing_cols[3]:
+                    missing_file = st.file_uploader(
+                        "上传缺失文件",
+                        type=["xlsx", "xlsm", "csv", "png", "jpg", "jpeg", "pdf"],
+                        key="missing_support_file",
+                    )
+                st.button(
+                    "添加到样本文件池",
+                    disabled=not missing_file,
+                    type="secondary",
+                    on_click=add_missing_support_file,
+                    args=(missing_sample_no, missing_report, missing_kind, missing_file),
+                )
+                if st.session_state.get("missing_support_file_error"):
+                    st.error(st.session_state["missing_support_file_error"])
+
+                standard_zip_bytes = st.session_state.get("standard_named_zip_bytes")
+                if standard_zip_bytes:
+                    st.button(
+                        "使用已清洗/补充文件计算",
+                        type="primary",
+                        on_click=run_analysis_from_cleaned_zip,
+                        args=(
+                            standard_zip_bytes,
+                            st.session_state.get("audit_period", "2025.01.01-2025.12.31"),
+                            st.session_state.get("test_program", "SPD03012"),
+                        ),
+                    )
+
+                st.markdown("##### 直接上传标准文件计算")
                 uploaded_files = st.file_uploader(
                     "上传最终支持文件或 zip 包并计算",
                     type=["xlsx", "xlsm", "csv", "png", "jpg", "jpeg", "pdf", "zip"],
