@@ -653,6 +653,28 @@ PROGRAM_OPTIONS = {
     "SPD03015 - 存货成本差异分摊": "SPD03015",
 }
 
+PROGRAM_REQUIRED_REPORTS = {
+    "SPD03012": ["CO03", "KSBT", "3611"],
+    "SPD03014": ["CO03", "KSBT", "3611"],
+    "SPD03015": ["CKM3", "3611"],
+}
+
+PROGRAM_REQUIRES_ORDER_ID = {
+    "SPD03012": True,
+    "SPD03014": True,
+    "SPD03015": False,
+}
+
+
+def required_reports_for_program(program: str | None = None) -> list[str]:
+    program_code = str(program or st.session_state.get("test_program") or "SPD03012").upper()
+    return PROGRAM_REQUIRED_REPORTS.get(program_code, ["CO03", "KSBT", "3611"])
+
+
+def program_requires_order_id(program: str | None = None) -> bool:
+    program_code = str(program or st.session_state.get("test_program") or "SPD03012").upper()
+    return PROGRAM_REQUIRES_ORDER_ID.get(program_code, True)
+
 
 def sync_test_program_from_label() -> None:
     st.session_state["test_program"] = PROGRAM_OPTIONS.get(
@@ -751,29 +773,32 @@ def _standard_cleanup_filename(
     report: str,
     evidence_kind: str,
     extension: str,
+    include_order_id: bool = True,
 ) -> str:
     sample_text = str(sample_no or "1").strip()
     order_text = str(order_id or "待补充").strip()
     extension_text = extension.lstrip(".").lower()
+    prefix = f"样本{sample_text}/{sample_text}."
+    order_part = f"订单编号{order_text}-" if include_order_id else ""
     if report == "CKM3":
         material_text = str(material_id or "待补充").strip()
         return (
-            f"样本{sample_text}/{sample_text}.订单编号{order_text}-"
+            f"{prefix}{order_part}"
             f"物料ID-{material_text}-CKM3-{evidence_kind}.{extension_text}"
         )
     if report == "CO03" and product_id:
         product_text = str(product_id).strip()
         return (
-            f"样本{sample_text}/{sample_text}.订单编号{order_text}-"
+            f"{prefix}{order_part}"
             f"物料编码-{product_text}-CO03-{evidence_kind}.{extension_text}"
         )
     if report == "KSBT" and cost_center:
         cost_center_text = str(cost_center).strip()
         return (
-            f"样本{sample_text}/{sample_text}.订单编号{order_text}-"
+            f"{prefix}{order_part}"
             f"成本中心-{cost_center_text}-KSBT-{evidence_kind}.{extension_text}"
         )
-    return f"样本{sample_text}/{sample_text}.订单编号{order_text}-{report}-{evidence_kind}.{extension_text}"
+    return f"{prefix}{order_part}{report}-{evidence_kind}.{extension_text}"
 
 
 def _deduplicate_zip_name(name: str, used_names: set[str]) -> str:
@@ -997,7 +1022,8 @@ def apply_manual_params(sample_no: str, order_id: str, product_id: str, material
 def build_parameter_standard_files(params: dict, preview_items: list[dict]) -> list[dict]:
     results = []
     sample_no = params.get("sample_no") or "1"
-    order_id = params.get("order_id") or "待补充"
+    requires_order_id = program_requires_order_id()
+    order_id = params.get("order_id") or ("待补充" if requires_order_id else "")
     for item in preview_items:
         source_file = item.get("source_file") or ""
         label = item.get("label") or ""
@@ -1028,6 +1054,7 @@ def build_parameter_standard_files(params: dict, preview_items: list[dict]) -> l
             report=report,
             evidence_kind="截图",
             extension=extension,
+            include_order_id=requires_order_id,
         )
         results.append(
             {
@@ -1093,6 +1120,7 @@ def sample_completeness_rows(sample_count: int, cleanup_results: list[dict]) -> 
 def sample_completeness_rows_v2(
     sample_count: int,
     cleanup_results: list[dict],
+    required_reports: list[str] | None = None,
 ) -> list[dict]:
     by_sample: dict[str, set[str]] = {str(index): set() for index in range(1, sample_count + 1)}
     for item in cleanup_results:
@@ -1110,7 +1138,7 @@ def sample_completeness_rows_v2(
         by_sample.setdefault(sample, set()).add(f"{report}-{normalized_kind}")
 
     rows = []
-    required_reports = ["CO03", "KSBT", "3611", "CKM3"]
+    required_reports = required_reports or ["CO03", "KSBT", "3611", "CKM3"]
     required_kinds = ["表格", "截图"]
     for sample, files in sorted(by_sample.items(), key=lambda pair: int(pair[0]) if pair[0].isdigit() else 999):
         missing = []
@@ -1158,6 +1186,7 @@ def add_missing_support_file(sample_no: str, report: str, evidence_kind: str, up
         report=report,
         evidence_kind=evidence_kind,
         extension=extension,
+        include_order_id=program_requires_order_id(),
     )
 
     field_status = "非表格文件，未检查字段"
@@ -1174,7 +1203,7 @@ def add_missing_support_file(sample_no: str, report: str, evidence_kind: str, up
         "上传位置": report,
         "source_file": uploaded_file.name,
         "sample_no": str(sample_no),
-        "order_id": order_id or "待补充",
+        "order_id": order_id or ("待补充" if program_requires_order_id() else ""),
         "product_id": product_id,
         "material_id": material_id,
         "cost_center": cost_center,
@@ -1222,8 +1251,9 @@ def run_filename_cleanup_by_bucket(
         param_material_id = str(params.get("material_id") or "").strip()
         param_cost_center = str(params.get("cost_center") or "").strip()
         total_files = sum(len(files or []) for files in bucket_files.values())
+        requires_order_id = program_requires_order_id()
         missing_param_messages = []
-        if total_files and not order_id:
+        if requires_order_id and total_files and not order_id:
             missing_param_messages.append("订单编号")
         if bucket_files.get("CO03") and not param_product_id and not any(is_image_file(item.name) for item in bucket_files.get("CO03") or []):
             missing_param_messages.append("CO03物料编码")
@@ -1303,7 +1333,11 @@ def run_filename_cleanup_by_bucket(
                     cleaned["上传位置"] = report
                     cleaned["sample_no"] = str(sample_no or cleaned.get("sample_no") or "1").strip()
                     cleaned["report_type"] = report
-                    cleaned["order_id"] = order_id.strip() if order_id.strip() else cleaned.get("order_id") or "待补充"
+                    cleaned["order_id"] = (
+                        order_id.strip()
+                        if order_id.strip()
+                        else cleaned.get("order_id") or ("待补充" if requires_order_id else "")
+                    )
                     if report == "CKM3":
                         detected_material_id = str(cleaned.get("material_id") or detected_ckm3_material_id or "").strip()
                         if (
@@ -1360,6 +1394,7 @@ def run_filename_cleanup_by_bucket(
                         report=report,
                         evidence_kind=evidence_kind,
                         extension=extension,
+                        include_order_id=requires_order_id,
                     )
                     cleaned["file_bytes"] = file_bytes
 
@@ -1865,18 +1900,35 @@ with work_col:
             summary_cols[1].metric("测试程序", st.session_state.get("test_program", "SPD03012"))
             summary_cols[2].metric("审计期间", st.session_state.get("audit_period", "2025.01.01-2025.12.31"))
 
+            current_program = st.session_state.get("test_program", "SPD03012")
+            required_reports = required_reports_for_program(current_program)
+            requires_order_id = program_requires_order_id(current_program)
+            required_examples = []
+            if "CO03" in required_reports:
+                required_examples.append("<code>样本3/3.订单编号11001846-CO03-表格.xlsx</code>")
+            if "KSBT" in required_reports:
+                required_examples.append("<code>样本3/3.订单编号11001846-KSBT-表格.xlsx</code>")
+            if "3611" in required_reports:
+                required_examples.append(
+                    "<code>样本3/3.订单编号11001846-3611-表格.xlsx</code>"
+                    if requires_order_id
+                    else "<code>样本3/3.3611-表格.xlsx</code>"
+                )
+            if "CKM3" in required_reports:
+                required_examples.append(
+                    "<code>样本3/3.订单编号11001846-物料ID-13012857-CKM3-表格.xlsx</code>"
+                    if requires_order_id
+                    else "<code>样本3/3.物料ID-13012857-CKM3-表格.xlsx</code>"
+                )
+            filename_fields = "样本号、订单编号和报表类型" if requires_order_id else "样本号、报表类型；CKM3 还需包含物料ID"
             st.markdown(
-                """
+                f"""
                 <div class="upload-rules">
                   <strong>命名要求</strong><br>
                   zip 包内建议按 <code>样本1/</code>、<code>样本2/</code> 建文件夹；每个样本至少包含
-                  <code>CO03</code>、<code>KSBT</code>、<code>3611</code>、<code>CKM3</code> 表格文件，可同时包含对应截图。<br>
-                  文件名需包含样本号、订单编号和报表类型，例如：
-                  <code>样本3/3.订单编号11001846-CO03-表格.xlsx</code>、
-                  <code>样本3/3.订单编号11001846-CO03-截图.png</code>、
-                  <code>样本3/3.订单编号11001846-KSBT-表格.xlsx</code>、
-                  <code>样本3/3.订单编号11001846-3611-表格.xlsx</code>、
-                  <code>样本3/3.订单编号11001846-物料ID-13012857-CKM3-表格.xlsx</code>。
+                  <code>{"</code>、<code>".join(required_reports)}</code> 表格文件，可同时包含对应截图。<br>
+                  文件名需包含{filename_fields}，例如：
+                  {"、".join(required_examples)}。
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1900,18 +1952,32 @@ with work_col:
                 unsafe_allow_html=True,
             )
 
+            active_program = st.session_state.get("test_program", "SPD03012")
+            required_reports = required_reports_for_program(active_program)
+            requires_co03 = "CO03" in required_reports
+            requires_ksbt = "KSBT" in required_reports
+            requires_ckm3 = "CKM3" in required_reports
+            requires_order_id = program_requires_order_id(active_program)
+            first_step_text = (
+                '1. 若缺少 CKM3 Excel，先在 <code>CKM3表格OCR</code> 中把截图转成表格。<br>'
+                if requires_ckm3
+                else "1. 若文件命名不规范，直接进入文件名清洗。<br>"
+            )
             st.markdown(
-                """
+                f"""
                 <div class="upload-rules">
                   <strong>推荐处理顺序</strong><br>
-                  1. 若缺少 CKM3 Excel，先在 <code>OCR</code> 中把截图转成表格。<br>
+                  {first_step_text}
                   2. 若文件命名不规范，在 <code>文件名清洗</code> 中导出标准命名 ZIP。<br>
                   3. 将最终标准文件或 zip 包上传到 <code>计算结果</code>，生成 SPP 和底稿结果。
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            st.info(f"当前选择的测试程序：{st.session_state.get('test_program', 'SPD03012')}")
+            st.info(
+                f"当前选择的测试程序：{active_program}；本步骤仅需要："
+                + "、".join(required_reports)
+            )
 
             st.markdown("### 1. 参数获取")
             param_mode = st.radio(
@@ -1922,25 +1988,64 @@ with work_col:
             )
             params = current_evidence_params()
             if param_mode == "手工输入":
-                manual_cols = st.columns(5)
-                manual_sample = manual_cols[0].text_input("样本编号", value=params.get("sample_no", "1"), key="manual_sample_no")
-                manual_order = manual_cols[1].text_input("订单编号", value=params.get("order_id", ""), key="manual_order_id")
-                manual_product = manual_cols[2].text_input("CO03物料编码", value=params.get("product_id", ""), key="manual_product_id")
-                manual_material = manual_cols[3].text_input("CKM3物料ID", value=params.get("material_id", ""), key="manual_material_id")
-                manual_cost_center = manual_cols[4].text_input("KSBT成本中心", value=params.get("cost_center", ""), key="manual_cost_center")
+                manual_fields = [
+                    ("sample_no", "样本编号", params.get("sample_no", "1"), "manual_sample_no"),
+                ]
+                if requires_order_id:
+                    manual_fields.append(("order_id", "订单编号", params.get("order_id", ""), "manual_order_id"))
+                if requires_co03:
+                    manual_fields.append(("product_id", "CO03物料编码", params.get("product_id", ""), "manual_product_id"))
+                if requires_ckm3:
+                    manual_fields.append(("material_id", "CKM3物料ID", params.get("material_id", ""), "manual_material_id"))
+                if requires_ksbt:
+                    manual_fields.append(("cost_center", "KSBT成本中心", params.get("cost_center", ""), "manual_cost_center"))
+                manual_values = {
+                    "sample_no": params.get("sample_no", "1"),
+                    "order_id": params.get("order_id", ""),
+                    "product_id": params.get("product_id", ""),
+                    "material_id": params.get("material_id", ""),
+                    "cost_center": params.get("cost_center", ""),
+                }
+                manual_cols = st.columns(len(manual_fields))
+                for column, (field, label, value, key) in zip(manual_cols, manual_fields):
+                    manual_values[field] = column.text_input(label, value=value, key=key)
                 st.button(
                     "确认手工参数",
                     type="primary",
                     on_click=apply_manual_params,
-                    args=(manual_sample, manual_order, manual_product, manual_material, manual_cost_center),
+                    args=(
+                        manual_values["sample_no"],
+                        manual_values["order_id"],
+                        manual_values["product_id"],
+                        manual_values["material_id"],
+                        manual_values["cost_center"],
+                    ),
                 )
             else:
-                st.caption("上传 CO03 截图识别订单编号和物料编码，上传 KSBT 截图识别成本中心，上传 CKM3 截图识别物料ID。")
-                ocr_cols = st.columns(4)
-                ocr_sample_no = ocr_cols[0].text_input("样本编号", value=params.get("sample_no", "1"), key="ocr_sample_no")
-                co03_param_file = ocr_cols[1].file_uploader("CO03截图", type=["png", "jpg", "jpeg"], key="param_co03_file")
-                ksbt_param_file = ocr_cols[2].file_uploader("KSBT截图", type=["png", "jpg", "jpeg"], key="param_ksbt_file")
-                ckm3_param_file = ocr_cols[3].file_uploader("CKM3截图", type=["png", "jpg", "jpeg"], key="param_ckm3_file")
+                ocr_requirements = []
+                if requires_co03:
+                    ocr_requirements.append("CO03截图识别订单编号和物料编码")
+                if requires_ksbt:
+                    ocr_requirements.append("KSBT截图识别成本中心")
+                if requires_ckm3:
+                    ocr_requirements.append("CKM3截图识别物料ID")
+                st.caption("；".join(ocr_requirements) + "。")
+                ocr_field_count = 1 + int(requires_co03) + int(requires_ksbt) + int(requires_ckm3)
+                ocr_cols = st.columns(ocr_field_count)
+                ocr_column_index = 0
+                ocr_sample_no = ocr_cols[ocr_column_index].text_input("样本编号", value=params.get("sample_no", "1"), key="ocr_sample_no")
+                ocr_column_index += 1
+                co03_param_file = None
+                ksbt_param_file = None
+                ckm3_param_file = None
+                if requires_co03:
+                    co03_param_file = ocr_cols[ocr_column_index].file_uploader("CO03截图", type=["png", "jpg", "jpeg"], key="param_co03_file")
+                    ocr_column_index += 1
+                if requires_ksbt:
+                    ksbt_param_file = ocr_cols[ocr_column_index].file_uploader("KSBT截图", type=["png", "jpg", "jpeg"], key="param_ksbt_file")
+                    ocr_column_index += 1
+                if requires_ckm3:
+                    ckm3_param_file = ocr_cols[ocr_column_index].file_uploader("CKM3截图", type=["png", "jpg", "jpeg"], key="param_ckm3_file")
                 st.button(
                     "开始OCR识别参数",
                     disabled=not online_ocr_available(online_ocr_config) or not any([co03_param_file, ksbt_param_file, ckm3_param_file]),
@@ -1956,19 +2061,21 @@ with work_col:
                 {"_selected_for_delete": False, **row}
                 for row in evidence_params_table()
             ]
+            parameter_column_order = ["_selected_for_delete", "sample_no"]
+            if requires_order_id:
+                parameter_column_order.append("order_id")
+            if requires_co03:
+                parameter_column_order.append("product_id")
+            if requires_ckm3:
+                parameter_column_order.append("material_id")
+            if requires_ksbt:
+                parameter_column_order.append("cost_center")
             edited_params = st.data_editor(
                 evidence_editor_rows,
                 use_container_width=True,
                 hide_index=True,
                 key="evidence_params_editor",
-                column_order=[
-                    "_selected_for_delete",
-                    "sample_no",
-                    "order_id",
-                    "product_id",
-                    "material_id",
-                    "cost_center",
-                ],
+                column_order=parameter_column_order,
                 column_config={
                     "_selected_for_delete": st.column_config.CheckboxColumn("", width="small"),
                     "sample_no": st.column_config.TextColumn("样本编号", required=True),
@@ -2020,64 +2127,66 @@ with work_col:
                     )
 
             st.markdown("### 2. 文件名清洗与计算")
-            tab_ocr, tab_cleanup, tab_upload = st.tabs(["CKM3表格OCR", "文件名清洗", "计算结果"])
+            if requires_ckm3:
+                tab_ocr, tab_cleanup, tab_upload = st.tabs(["CKM3表格OCR", "文件名清洗", "计算结果"])
+                with tab_ocr:
+                    ocr_col, config_col = st.columns([1.25, 1])
+                    with ocr_col:
+                        st.info("仅用于 CKM3 截图，识别后生成可替代 CKM3-表格.xlsx 的支持性 Excel。3611 仍优先使用 SAP 导出的 Excel/CSV。")
+                    with config_col:
+                        if online_ocr_available(online_ocr_config):
+                            st.success("Qwen-OCR 服务已配置，智谱视觉可作为备用通道")
+                        else:
+                            st.warning("Qwen-OCR 服务未配置，OCR 暂不可用。")
 
-            with tab_ocr:
-                ocr_col, config_col = st.columns([1.25, 1])
-                with ocr_col:
-                    st.info("仅用于 CKM3 截图，识别后生成可替代 CKM3-表格.xlsx 的支持性 Excel。CO03、KSBT、3611 仍优先使用 SAP 导出的 Excel/CSV。")
-                with config_col:
-                    if online_ocr_available(online_ocr_config):
-                        st.success("Qwen-OCR 服务已配置，智谱视觉可作为备用通道")
-                    else:
-                        st.warning("Qwen-OCR 服务未配置，OCR 暂不可用。")
-
-                ckm3_ocr_files = st.file_uploader(
-                    "上传 CKM3 截图（PNG/JPG/JPEG/PDF）",
-                    type=["png", "jpg", "jpeg", "pdf"],
-                    accept_multiple_files=True,
-                    key="ckm3_ocr_files",
-                )
-                st.button(
-                    "仅识别 CKM3 截图并生成 Excel",
-                    disabled=not ckm3_ocr_files or not online_ocr_available(online_ocr_config),
-                    type="primary",
-                    on_click=run_ckm3_ocr_to_excel,
-                    args=(ckm3_ocr_files,),
-                )
-
-                ckm3_ocr_error = st.session_state.get("ckm3_ocr_error")
-                if ckm3_ocr_error:
-                    st.error(ckm3_ocr_error)
-
-                ckm3_ocr_excels = st.session_state.get("ckm3_ocr_excels") or []
-                if ckm3_ocr_excels:
-                    st.dataframe(
-                        [
-                            {
-                                "来源截图": item.get("source_file"),
-                                "状态": item.get("status"),
-                                "生成文件": item.get("file_name") or "-",
-                                "明细行数": item.get("row_count"),
-                            }
-                            for item in ckm3_ocr_excels
-                        ],
-                        use_container_width=True,
-                        hide_index=True,
+                    ckm3_ocr_files = st.file_uploader(
+                        "上传 CKM3 截图（PNG/JPG/JPEG/PDF）",
+                        type=["png", "jpg", "jpeg", "pdf"],
+                        accept_multiple_files=True,
+                        key="ckm3_ocr_files",
                     )
-                    for index, item in enumerate(ckm3_ocr_excels, start=1):
-                        if item.get("bytes"):
-                            st.download_button(
-                                f"下载 OCR 生成 Excel #{index}",
-                                data=item["bytes"],
-                                file_name=Path(item.get("file_name") or f"ckm3_ocr_{index}.xlsx").name,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                type="secondary",
-                            )
-                    with st.expander("查看 OCR 原文"):
-                        for item in ckm3_ocr_excels:
-                            st.markdown(f"**{item.get('source_file')}**")
-                            st.text(item.get("ocr_text") or "")
+                    st.button(
+                        "仅识别 CKM3 截图并生成 Excel",
+                        disabled=not ckm3_ocr_files or not online_ocr_available(online_ocr_config),
+                        type="primary",
+                        on_click=run_ckm3_ocr_to_excel,
+                        args=(ckm3_ocr_files,),
+                    )
+
+                    ckm3_ocr_error = st.session_state.get("ckm3_ocr_error")
+                    if ckm3_ocr_error:
+                        st.error(ckm3_ocr_error)
+
+                    ckm3_ocr_excels = st.session_state.get("ckm3_ocr_excels") or []
+                    if ckm3_ocr_excels:
+                        st.dataframe(
+                            [
+                                {
+                                    "来源截图": item.get("source_file"),
+                                    "状态": item.get("status"),
+                                    "生成文件": item.get("file_name") or "-",
+                                    "明细行数": item.get("row_count"),
+                                }
+                                for item in ckm3_ocr_excels
+                            ],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        for index, item in enumerate(ckm3_ocr_excels, start=1):
+                            if item.get("bytes"):
+                                st.download_button(
+                                    f"下载 OCR 生成 Excel #{index}",
+                                    data=item["bytes"],
+                                    file_name=Path(item.get("file_name") or f"ckm3_ocr_{index}.xlsx").name,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    type="secondary",
+                                )
+                        with st.expander("查看 OCR 原文"):
+                            for item in ckm3_ocr_excels:
+                                st.markdown(f"**{item.get('source_file')}**")
+                                st.text(item.get("ocr_text") or "")
+            else:
+                tab_cleanup, tab_upload = st.tabs(["文件名清洗", "计算结果"])
 
             with tab_cleanup:
                 config_col, action_col = st.columns([1.2, 1])
@@ -2121,30 +2230,49 @@ with work_col:
                         key="cleanup_sample_no_select",
                     )
                 params = current_evidence_params(cleanup_sample_no)
-                cleanup_order_id = params.get("order_id") or ""
+                cleanup_order_id = params.get("order_id") or "" if requires_order_id else ""
                 st.markdown("##### 样本文件完整性")
                 completeness = sample_completeness_rows_v2(
                     int(cleanup_sample_count),
                     st.session_state.get("filename_cleanup_results") or [],
+                    required_reports,
                 )
                 st.dataframe(completeness, use_container_width=True, hide_index=True)
+                example_names = []
+                if "CO03" in required_reports:
+                    example_names.append("<code>样本1/1.订单编号11000437-CO03-表格.xlsx</code>")
+                if "KSBT" in required_reports:
+                    example_names.append("<code>样本1/1.订单编号11000437-KSBT-截图.png</code>")
+                if "3611" in required_reports:
+                    example_names.append(
+                        "<code>样本1/1.订单编号11000437-3611-截图.png</code>"
+                        if requires_order_id
+                        else "<code>样本1/1.3611-截图.png</code>"
+                    )
+                if "CKM3" in required_reports:
+                    example_names.append(
+                        "<code>样本1/1.订单编号11000437-物料ID-13014012-CKM3-截图.png</code>"
+                        if requires_order_id
+                        else "<code>样本1/1.物料ID-13014012-CKM3-截图.png</code>"
+                    )
                 st.markdown(
                     """
                     <div class="upload-rules">
                       <strong>文件名清洗说明</strong><br>
-                      请按文件所属类型上传到对应位置。输出文件包将按标准格式重命名，例如
-                      <code>样本1/1.订单编号11000437-CO03-表格.xlsx</code>、
-                      <code>样本1/1.订单编号11000437-3611-截图.png</code>、
-                      <code>样本1/1.订单编号11000437-物料ID-13014012-CKM3-截图.png</code>。
-                      CKM3 截图会自动识别物料ID；若 CO03、KSBT、3611、CKM3 都上传截图和 Excel，将导出 4×2 个标准命名文件。
+                      当前测试程序仅需要 <code>{required_reports_text}</code>。请按文件所属类型上传到对应位置。输出文件包将按标准格式重命名，例如
+                      {example_text}。
+                      只会对当前程序所需资料生成标准命名文件。
                     </div>
-                    """,
+                    """.format(
+                        required_reports_text="、".join(required_reports),
+                        example_text="、".join(example_names),
+                    ),
                     unsafe_allow_html=True,
                 )
 
-                bucket_cols = st.columns(4)
+                bucket_cols = st.columns(len(required_reports))
                 bucket_files = {}
-                for column, report in zip(bucket_cols, ["CO03", "KSBT", "3611", "CKM3"]):
+                for column, report in zip(bucket_cols, required_reports):
                     with column:
                         bucket_files[report] = st.file_uploader(
                             f"{report} 文件",
@@ -2154,12 +2282,15 @@ with work_col:
                         )
 
                 total_cleanup_files = sum(len(files or []) for files in bucket_files.values())
-                param_status = {
-                    "订单编号": params.get("order_id") or "未填写",
-                    "CO03物料编码": params.get("product_id") or "未填写",
-                    "CKM3物料ID": params.get("material_id") or "未填写",
-                    "KSBT成本中心": params.get("cost_center") or "未填写",
-                }
+                param_status = {}
+                if requires_order_id:
+                    param_status["订单编号"] = params.get("order_id") or "未填写"
+                if requires_co03:
+                    param_status["CO03物料编码"] = params.get("product_id") or "未填写"
+                if requires_ckm3:
+                    param_status["CKM3物料ID"] = params.get("material_id") or "未填写"
+                if requires_ksbt:
+                    param_status["KSBT成本中心"] = params.get("cost_center") or "未填写"
                 st.caption(
                     "当前样本关键参数："
                     + "；".join(f"{key}={value}" for key, value in param_status.items())
@@ -2178,23 +2309,31 @@ with work_col:
 
                 cleanup_results = st.session_state.get("filename_cleanup_results") or []
                 if cleanup_results:
-                    cleanup_table_rows = [
-                        {
+                    cleanup_table_rows = []
+                    for item in cleanup_results:
+                        cleanup_row = {
                             "上传位置": item.get("上传位置"),
                             "原始文件": item.get("source_file"),
                             "样本号": item.get("sample_no") or "-",
-                            "订单编号": item.get("order_id") or "-",
-                            "物料编码": item.get("product_id") or "-",
-                            "物料ID": item.get("material_id") or "-",
-                            "成本中心": item.get("cost_center") or "-",
-                            "识别类型": item.get("report_type") or "-",
-                            "证据类型": item.get("evidence_kind") or "-",
-                            "建议标准文件名": item.get("standard_filename") or "-",
-                            "字段检查": item.get("field_status") or "-",
-                            "缺失字段": "、".join(item.get("missing_field_labels") or []) or "-",
                         }
-                        for item in cleanup_results
-                    ]
+                        if requires_order_id:
+                            cleanup_row["订单编号"] = item.get("order_id") or "-"
+                        if requires_co03:
+                            cleanup_row["物料编码"] = item.get("product_id") or "-"
+                        if requires_ckm3:
+                            cleanup_row["物料ID"] = item.get("material_id") or "-"
+                        if requires_ksbt:
+                            cleanup_row["成本中心"] = item.get("cost_center") or "-"
+                        cleanup_row.update(
+                            {
+                                "识别类型": item.get("report_type") or "-",
+                                "证据类型": item.get("evidence_kind") or "-",
+                                "建议标准文件名": item.get("standard_filename") or "-",
+                                "字段检查": item.get("field_status") or "-",
+                                "缺失字段": "、".join(item.get("missing_field_labels") or []) or "-",
+                            }
+                        )
+                        cleanup_table_rows.append(cleanup_row)
                     st.dataframe(cleanup_table_rows, use_container_width=True, hide_index=True)
 
                     st.markdown("#### 标准文件名预览")
@@ -2265,6 +2404,7 @@ with work_col:
                     sample_completeness_rows_v2(
                         int(calculation_sample_count),
                         st.session_state.get("filename_cleanup_results") or [],
+                        required_reports,
                     ),
                     use_container_width=True,
                     hide_index=True,
@@ -2281,7 +2421,7 @@ with work_col:
                 with missing_cols[1]:
                     missing_report = st.selectbox(
                         "文件类型",
-                        ["CO03", "KSBT", "3611", "CKM3"],
+                        required_reports,
                         key="missing_file_report",
                     )
                 with missing_cols[2]:
