@@ -10,6 +10,7 @@ import re
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -1697,6 +1698,56 @@ def _excel_preview_rows(file_bytes: bytes, max_rows: int = 30) -> list[dict]:
     return rows
 
 
+def workbook_preview_payload(workbook_bytes: bytes, sheet_name: str | None = None, max_rows: int = 30, max_cols: int = 18) -> dict:
+    workbook = load_workbook(BytesIO(workbook_bytes), data_only=False, read_only=True)
+    sheet_names = workbook.sheetnames
+    active_sheet = sheet_name if sheet_name in sheet_names else sheet_names[0]
+    sheet = workbook[active_sheet]
+    row_limit = min(sheet.max_row or 1, max_rows)
+    col_limit = min(sheet.max_column or 1, max_cols)
+    columns = [get_column_letter(index) for index in range(1, col_limit + 1)]
+    rows = []
+    for row_index, values in enumerate(
+        sheet.iter_rows(min_row=1, max_row=row_limit, max_col=col_limit, values_only=True),
+        start=1,
+    ):
+        row = {"行号": row_index}
+        row.update({column: value if value is not None else "" for column, value in zip(columns, values)})
+        rows.append(row)
+    payload = {
+        "sheet_names": sheet_names,
+        "active_sheet": active_sheet,
+        "max_row": sheet.max_row or 0,
+        "max_column": sheet.max_column or 0,
+        "rows": rows,
+    }
+    workbook.close()
+    return payload
+
+
+def render_workbook_result_preview(title: str, workbook_bytes: bytes, key_prefix: str) -> None:
+    with st.expander(title, expanded=True):
+        try:
+            initial_payload = workbook_preview_payload(workbook_bytes)
+            sheet_names = initial_payload["sheet_names"]
+            selected_sheet = st.selectbox(
+                "预览 Sheet",
+                sheet_names,
+                index=sheet_names.index(initial_payload["active_sheet"]),
+                key=f"{key_prefix}_sheet",
+            )
+            payload = workbook_preview_payload(workbook_bytes, selected_sheet)
+            meta_cols = st.columns(3)
+            meta_cols[0].metric("Sheet 数", len(sheet_names))
+            meta_cols[1].metric("当前 Sheet 行数", payload["max_row"])
+            meta_cols[2].metric("当前 Sheet 列数", payload["max_column"])
+            st.dataframe(payload["rows"], use_container_width=True, hide_index=True)
+            if payload["max_row"] > 30 or payload["max_column"] > 18:
+                st.caption("当前仅预览前 30 行、前 18 列；完整内容请下载 Excel 查看。")
+        except Exception as exc:
+            st.warning(f"暂无法预览该 Excel：{exc}")
+
+
 def render_cleanup_file_preview(item: dict) -> None:
     file_name = item.get("standard_filename") or item.get("source_file") or "文件预览"
     file_bytes = item.get("file_bytes") or b""
@@ -2540,6 +2591,16 @@ with work_col:
                     st.warning("未识别到有效样本，暂不生成底稿结果。请先根据异常提示修正上传文件命名或内容。")
                 else:
                     st.info(f"本次生成的测试程序：{selected_program}")
+                    render_workbook_result_preview(
+                        "SPP Supporting Excel 预览",
+                        supporting_bytes,
+                        "supporting_result_preview",
+                    )
+                    render_workbook_result_preview(
+                        f"{selected_program}_IRM(SAP) 预览",
+                        selected_spd_bytes,
+                        "selected_spd_result_preview",
+                    )
                     st.download_button(
                         "下载 SPP Supporting Excel",
                         data=supporting_bytes,
