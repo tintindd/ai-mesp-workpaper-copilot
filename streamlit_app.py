@@ -11,6 +11,7 @@ import re
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -1239,6 +1240,7 @@ def run_filename_cleanup_by_bucket(
     bucket_files: dict[str, list],
 ) -> None:
     st.session_state["filename_cleanup_results"] = []
+    st.session_state["processing_focus"] = "cleanup"
     st.session_state.pop("standard_named_zip_bytes", None)
     st.session_state.pop("filename_cleanup_error", None)
 
@@ -1419,6 +1421,7 @@ def run_filename_cleanup_by_bucket(
         st.session_state["filename_cleanup_results"] = results
         st.session_state["standard_named_zip_bytes"] = build_standard_named_zip_bytes(results)
     except Exception as exc:
+        st.session_state["processing_focus"] = "cleanup"
         st.session_state["filename_cleanup_error"] = str(exc)
 
 
@@ -2128,7 +2131,7 @@ with work_col:
 
             st.markdown("### 2. 文件名清洗与计算")
             if requires_ckm3:
-                tab_ocr, tab_cleanup, tab_upload = st.tabs(["CKM3表格OCR", "文件名清洗", "计算结果"])
+                tab_cleanup, tab_ocr, tab_upload = st.tabs(["文件名清洗", "CKM3表格OCR", "计算结果"])
                 with tab_ocr:
                     ocr_col, config_col = st.columns([1.25, 1])
                     with ocr_col:
@@ -2189,6 +2192,19 @@ with work_col:
                 tab_cleanup, tab_upload = st.tabs(["文件名清洗", "计算结果"])
 
             with tab_cleanup:
+                st.markdown('<div id="filename-cleanup-anchor"></div>', unsafe_allow_html=True)
+                if st.session_state.pop("processing_focus", "") == "cleanup":
+                    components.html(
+                        """
+                        <script>
+                        const target = window.parent.document.getElementById("filename-cleanup-anchor");
+                        if (target) {
+                            target.scrollIntoView({behavior: "smooth", block: "start"});
+                        }
+                        </script>
+                        """,
+                        height=0,
+                    )
                 config_col, action_col = st.columns([1.2, 1])
                 with config_col:
                     if deepseek_config:

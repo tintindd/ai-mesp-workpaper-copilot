@@ -12,6 +12,11 @@ from openpyxl import load_workbook
 
 
 REPORTS = ["CO03", "KSBT", "3611", "CKM3"]
+PROGRAM_REPORTS = {
+    "SPD03012": ["CO03", "KSBT", "3611"],
+    "SPD03014": ["CO03", "KSBT", "3611"],
+    "SPD03015": ["CKM3", "3611"],
+}
 TABLE_EXTENSIONS = {".xlsx", ".xlsm", ".csv"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".pdf"}
 EXPECTED_EVIDENCE = [f"{report}-{kind}" for report in REPORTS for kind in ["截图", "表格"]]
@@ -79,6 +84,15 @@ SAMPLE_VALUE_FIELDS = {
     "3611": ["成本要素编码", "成本要素名称"],
     "CKM3": ["层级", "类别", "数量单位"],
 }
+
+
+def reports_for_program(program: str = "") -> list[str]:
+    program_code = str(program or "").upper()
+    return PROGRAM_REPORTS.get(program_code, REPORTS)
+
+
+def expected_evidence_for_program(program: str = "") -> list[str]:
+    return [f"{report}-{kind}" for report in reports_for_program(program) for kind in ["截图", "表格"]]
 
 
 def normalize_text(value) -> str:
@@ -325,6 +339,8 @@ def summarize_parse_failure(path: Path, root: Path) -> dict:
 def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
     parsed_files = []
     ignored_files = []
+    required_reports = reports_for_program(program)
+    expected_evidence = expected_evidence_for_program(program)
 
     for path in sorted(folder.rglob("*")):
         if not path.is_file():
@@ -351,7 +367,7 @@ def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
                 "未识别有效支持文件",
                 "全部",
                 "未从本次上传中识别到有效的 MESP 支持文件。",
-                "请确认文件名包含样本号、订单编号以及 CO03、KSBT、3611 或 CKM3 报表类型；如包含多个样本，建议按样本文件夹打包上传 zip。",
+                f"请确认文件名包含样本号以及 {', '.join(required_reports)} 报表类型；如包含多个样本，建议按样本文件夹打包上传 zip。",
                 "error",
             )
         )
@@ -361,7 +377,7 @@ def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
         order = next((item["order"] for item in sample_files if item["order"]), "")
         present = {f"{item['report']}-{item['kind']}" for item in sample_files}
 
-        for evidence_key in EXPECTED_EVIDENCE:
+        for evidence_key in expected_evidence:
             if evidence_key not in present:
                 report, kind = evidence_key.split("-")
                 issues.append(
@@ -375,14 +391,15 @@ def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
                 )
 
         reports_seen = {item["report"] for item in sample_files}
-        if len(reports_seen) < len(REPORTS):
-            missing_reports = sorted(set(REPORTS) - reports_seen)
+        required_seen = reports_seen & set(required_reports)
+        if len(required_seen) < len(required_reports):
+            missing_reports = sorted(set(required_reports) - reports_seen)
             issues.append(
                 build_issue(
                     "报表类型缺失",
                     sample,
                     f"样本 {sample} 未识别到以下报表类型：{', '.join(missing_reports)}。",
-                    "请确认文件名包含 CO03、KSBT、3611 或 CKM3。",
+                    f"请确认文件名包含 {', '.join(required_reports)}。",
                     "missing",
                 )
             )
@@ -416,11 +433,12 @@ def analyze_folder(folder: Path, period: str = "", program: str = "") -> dict:
                     )
 
     if period and parsed_files:
+        period_reports = [report for report in ["KSBT", "3611", "CKM3"] if report in required_reports]
         issues.append(
             build_issue(
                 "期间一致性检查",
                 "全部",
-                f"需要检查 KSBT、3611、CKM3 的会计期间是否与审计期间 {period} 一致。",
+                f"需要检查 {', '.join(period_reports) or ', '.join(required_reports)} 的会计期间是否与审计期间 {period} 一致。",
                 "当前导出表格尚未统一出现会计期间字段；建议后续增加期间字段或在界面中让用户手工确认。",
             )
         )
