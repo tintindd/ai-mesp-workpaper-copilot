@@ -14,7 +14,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.hyperlink import Hyperlink
 
-from mesp_automation_engine import REPORTS, find_order, find_report, find_sample
+from mesp_automation_engine import REPORTS, find_order, find_report, find_sample, reports_for_program
 
 
 TABLE_EXTENSIONS = {".xlsx", ".xlsm", ".csv"}
@@ -248,6 +248,7 @@ def _build_directory_sheet(
     table_links: dict[tuple[int, str], str],
     image_counts: dict[tuple[int, str], int],
     image_links: dict[tuple[int, str], str],
+    required_reports: list[str],
 ) -> None:
     sheet.title = "SPP目录"
     sheet.sheet_view.showGridLines = False
@@ -270,6 +271,11 @@ def _build_directory_sheet(
         sheet.cell(row_index, 3, material_ids.get(sample, ""))
         col = 4
         for report in REPORTS:
+            if report not in required_reports:
+                sheet.cell(row_index, col, "不适用")
+                sheet.cell(row_index, col + 1, "不适用")
+                col += 2
+                continue
             count = image_counts.get((sample, report), 0)
             if count:
                 _hyperlink(sheet.cell(row_index, col), "INF-截图", f"{count} 张", image_links.get((sample, report), "A1"))
@@ -300,6 +306,7 @@ def _build_image_sheet(
     samples: list[int],
     orders: dict[int, str],
     image_items: list[dict[str, Any]],
+    required_reports: list[str],
 ) -> dict[tuple[int, str], str]:
     sheet.title = "INF-截图"
     sheet.sheet_view.showGridLines = False
@@ -328,6 +335,9 @@ def _build_image_sheet(
         sheet.cell(row, 1).alignment = Alignment(vertical="top", wrap_text=True)
         block_height = 12
         for col_index, report in enumerate(REPORTS, 2):
+            if report not in required_reports:
+                sheet.cell(row, col_index, "不适用")
+                continue
             items = images_by_sample_report.get((sample, report), [])
             if not items:
                 sheet.cell(row, col_index, "缺失")
@@ -363,6 +373,7 @@ def _build_image_sheet(
 
 def build_supporting_workbook(result: dict, source_folder: Path) -> Workbook:
     items = _discover_files(source_folder)
+    required_reports = reports_for_program(result.get("program") or "")
     report_order = {report: index for index, report in enumerate(REPORTS)}
     items = sorted(
         items,
@@ -398,8 +409,17 @@ def build_supporting_workbook(result: dict, source_folder: Path) -> Workbook:
     for item in image_items:
         image_counts[(item["sample"], item["report"])] += 1
 
-    image_links = _build_image_sheet(image_sheet, samples, orders, image_items)
-    _build_directory_sheet(directory, samples, orders, material_ids, table_links, image_counts, image_links)
+    image_links = _build_image_sheet(image_sheet, samples, orders, image_items, required_reports)
+    _build_directory_sheet(
+        directory,
+        samples,
+        orders,
+        material_ids,
+        table_links,
+        image_counts,
+        image_links,
+        required_reports,
+    )
 
     workbook.properties.title = "SPP Supporting Package"
     workbook.properties.subject = result.get("program") or ""

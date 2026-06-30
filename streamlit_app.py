@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import zipfile
+import html
 from io import BytesIO
 from pathlib import Path
 import re
@@ -1698,28 +1699,103 @@ def _excel_preview_rows(file_bytes: bytes, max_rows: int = 30) -> list[dict]:
     return rows
 
 
+def _excel_color_to_css(color) -> str:
+    if not color or not getattr(color, "type", None):
+        return ""
+    if color.type == "rgb" and color.rgb:
+        rgb = str(color.rgb)
+        if len(rgb) >= 6:
+            return f"#{rgb[-6:]}"
+    return ""
+
+
+def _preview_cell_style(cell) -> str:
+    styles = [
+        "border:1px solid #d8dee8",
+        "padding:4px 6px",
+        "min-width:72px",
+        "max-width:260px",
+        "white-space:pre-wrap",
+        "vertical-align:middle",
+    ]
+    fill_color = _excel_color_to_css(cell.fill.fgColor)
+    if cell.fill and cell.fill.fill_type and fill_color:
+        styles.append(f"background:{fill_color}")
+    font_color = _excel_color_to_css(cell.font.color)
+    if font_color:
+        styles.append(f"color:{font_color}")
+    if cell.font.bold:
+        styles.append("font-weight:700")
+    if cell.font.italic:
+        styles.append("font-style:italic")
+    if cell.font.sz:
+        styles.append(f"font-size:{min(float(cell.font.sz), 22)}px")
+    if cell.font.name:
+        styles.append(f"font-family:{html.escape(str(cell.font.name))}, Arial, sans-serif")
+    if cell.alignment.horizontal:
+        styles.append(f"text-align:{cell.alignment.horizontal}")
+    if cell.alignment.vertical:
+        styles.append(f"vertical-align:{cell.alignment.vertical}")
+    return ";".join(styles)
+
+
 def workbook_preview_payload(workbook_bytes: bytes, sheet_name: str | None = None, max_rows: int = 30, max_cols: int = 18) -> dict:
-    workbook = load_workbook(BytesIO(workbook_bytes), data_only=False, read_only=True)
+    workbook = load_workbook(BytesIO(workbook_bytes), data_only=False, read_only=False)
     sheet_names = workbook.sheetnames
     active_sheet = sheet_name if sheet_name in sheet_names else sheet_names[0]
     sheet = workbook[active_sheet]
     row_limit = min(sheet.max_row or 1, max_rows)
     col_limit = min(sheet.max_column or 1, max_cols)
-    columns = [get_column_letter(index) for index in range(1, col_limit + 1)]
-    rows = []
-    for row_index, values in enumerate(
-        sheet.iter_rows(min_row=1, max_row=row_limit, max_col=col_limit, values_only=True),
-        start=1,
-    ):
-        row = {"行号": row_index}
-        row.update({column: value if value is not None else "" for column, value in zip(columns, values)})
-        rows.append(row)
+    covered_cells: set[tuple[int, int]] = set()
+    merge_starts: dict[tuple[int, int], tuple[int, int]] = {}
+    for merged_range in sheet.merged_cells.ranges:
+        min_col, min_row, max_col, max_row = merged_range.bounds
+        if min_row > row_limit or min_col > col_limit:
+            continue
+        rowspan = min(max_row, row_limit) - min_row + 1
+        colspan = min(max_col, col_limit) - min_col + 1
+        if rowspan > 1 or colspan > 1:
+            merge_starts[(min_row, min_col)] = (rowspan, colspan)
+        for row_index in range(min_row, min(max_row, row_limit) + 1):
+            for col_index in range(min_col, min(max_col, col_limit) + 1):
+                if (row_index, col_index) != (min_row, min_col):
+                    covered_cells.add((row_index, col_index))
+
+    html_rows = []
+    for row_index in range(1, row_limit + 1):
+        cells = [f'<th class="row-head">{row_index}</th>']
+        for col_index in range(1, col_limit + 1):
+            if (row_index, col_index) in covered_cells:
+                continue
+            cell = sheet.cell(row=row_index, column=col_index)
+            value = "" if cell.value is None else str(cell.value)
+            rowspan, colspan = merge_starts.get((row_index, col_index), (1, 1))
+            span_attrs = ""
+            if rowspan > 1:
+                span_attrs += f' rowspan="{rowspan}"'
+            if colspan > 1:
+                span_attrs += f' colspan="{colspan}"'
+            cells.append(f'<td style="{_preview_cell_style(cell)}"{span_attrs}>{html.escape(value)}</td>')
+        html_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    column_headers = "".join(
+        f'<th class="col-head">{html.escape(get_column_letter(index))}</th>'
+        for index in range(1, col_limit + 1)
+    )
+    table_html = f"""
+    <div class="excel-preview-wrap">
+      <table class="excel-preview-table">
+        <thead><tr><th class="corner-head"></th>{column_headers}</tr></thead>
+        <tbody>{''.join(html_rows)}</tbody>
+      </table>
+    </div>
+    """
     payload = {
         "sheet_names": sheet_names,
         "active_sheet": active_sheet,
         "max_row": sheet.max_row or 0,
         "max_column": sheet.max_column or 0,
-        "rows": rows,
+        "html": table_html,
     }
     workbook.close()
     return payload
@@ -1741,7 +1817,41 @@ def render_workbook_result_preview(title: str, workbook_bytes: bytes, key_prefix
             meta_cols[0].metric("Sheet 数", len(sheet_names))
             meta_cols[1].metric("当前 Sheet 行数", payload["max_row"])
             meta_cols[2].metric("当前 Sheet 列数", payload["max_column"])
-            st.dataframe(payload["rows"], use_container_width=True, hide_index=True)
+            st.markdown(
+                """
+                <style>
+                .excel-preview-wrap {
+                    overflow: auto;
+                    max-height: 560px;
+                    border: 1px solid #d8dee8;
+                    border-radius: 8px;
+                    background: #ffffff;
+                }
+                .excel-preview-table {
+                    border-collapse: collapse;
+                    font-size: 12px;
+                    table-layout: auto;
+                    min-width: 100%;
+                }
+                .excel-preview-table .corner-head,
+                .excel-preview-table .row-head,
+                .excel-preview-table .col-head {
+                    position: sticky;
+                    background: #f5f7fb;
+                    color: #526071;
+                    border: 1px solid #d8dee8;
+                    padding: 4px 6px;
+                    font-weight: 600;
+                    z-index: 2;
+                }
+                .excel-preview-table .col-head { top: 0; }
+                .excel-preview-table .row-head { left: 0; text-align: right; min-width: 42px; }
+                .excel-preview-table .corner-head { top: 0; left: 0; z-index: 3; min-width: 42px; }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown(payload["html"], unsafe_allow_html=True)
             if payload["max_row"] > 30 or payload["max_column"] > 18:
                 st.caption("当前仅预览前 30 行、前 18 列；完整内容请下载 Excel 查看。")
         except Exception as exc:
