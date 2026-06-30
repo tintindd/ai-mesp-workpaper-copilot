@@ -350,6 +350,54 @@ st.markdown(
     .theme-dark [data-testid="stTable"] {
         background: #0b0f19 !important;
     }
+    .dark-table-wrap {
+        overflow-x: auto;
+        border: 1px solid #263246;
+        border-radius: .55rem;
+        background: #0f172a;
+        margin: .45rem 0 1rem;
+    }
+    .dark-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: .86rem;
+        color: #e5edf8;
+    }
+    .dark-table th {
+        background: #172033;
+        color: #dbeafe;
+        font-weight: 800;
+        text-align: left;
+        border: 1px solid #2c3a52;
+        padding: .55rem .65rem;
+        white-space: nowrap;
+    }
+    .dark-table td {
+        background: #0f172a;
+        color: #e5edf8;
+        border: 1px solid #263246;
+        padding: .55rem .65rem;
+        vertical-align: top;
+    }
+    .dark-table tr:nth-child(even) td {
+        background: #111827;
+    }
+    .dark-edit-header {
+        background: #172033;
+        color: #dbeafe;
+        border: 1px solid #2c3a52;
+        border-radius: .35rem .35rem 0 0;
+        padding: .55rem .65rem;
+        font-weight: 800;
+        min-height: 2.5rem;
+    }
+    .dark-edit-row {
+        border-left: 1px solid #263246;
+        border-right: 1px solid #263246;
+        border-bottom: 1px solid #263246;
+        padding: .25rem .35rem;
+        background: #0f172a;
+    }
     @media (max-width: 900px) {
         .mesp-hero { padding: 1.6rem 1.4rem; align-items: flex-start; flex-direction: column; }
         .mesp-shell { width: calc(100vw - 1.5rem); margin-top: 1rem; }
@@ -896,11 +944,49 @@ def run_analysis_from_cleaned_zip(zip_bytes: bytes | None, period: str, program:
         st.session_state["filename_cleanup_error"] = str(exc)
 
 
+def render_themed_table(rows: list[dict], columns: list[str] | None = None) -> None:
+    if not rows:
+        st.info("暂无数据。")
+        return
+    if not theme_is_dark:
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+        return
+
+    if columns is None:
+        columns = []
+        for row in rows:
+            for key in row.keys():
+                if key not in columns:
+                    columns.append(key)
+
+    header_html = "".join(f"<th>{html.escape(str(column))}</th>" for column in columns)
+    body_html = []
+    for row in rows:
+        cells = []
+        for column in columns:
+            value = row.get(column, "")
+            if value is None:
+                value = ""
+            cells.append(f"<td>{html.escape(str(value))}</td>")
+        body_html.append("<tr>" + "".join(cells) + "</tr>")
+    st.markdown(
+        f"""
+        <div class="dark-table-wrap">
+          <table class="dark-table">
+            <thead><tr>{header_html}</tr></thead>
+            <tbody>{''.join(body_html)}</tbody>
+          </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_issues(issues: list[dict]) -> None:
     if not issues:
         st.success("未发现异常或待补充事项。")
         return
-    st.dataframe(
+    render_themed_table(
         [
             {
                 "类型": item.get("type"),
@@ -910,9 +996,7 @@ def render_issues(issues: list[dict]) -> None:
                 "状态": item.get("status"),
             }
             for item in issues
-        ],
-        use_container_width=True,
-        hide_index=True,
+        ]
     )
 
 
@@ -920,7 +1004,7 @@ def render_workbooks(items: list[dict]) -> None:
     if not items:
         st.info("暂无 SAP 表格映射结果。")
         return
-    st.dataframe(
+    render_themed_table(
         [
             {
                 "样本": item.get("sample"),
@@ -933,9 +1017,7 @@ def render_workbooks(items: list[dict]) -> None:
                 "缺失字段数": len(item.get("missing_fields") or []),
             }
             for item in items
-        ],
-        use_container_width=True,
-        hide_index=True,
+        ]
     )
 
 
@@ -943,7 +1025,7 @@ def render_trace(items: list[dict]) -> None:
     if not items:
         st.info("暂无 Evidence Traceability 结果。")
         return
-    st.dataframe(
+    render_themed_table(
         [
             {
                 "样本": item.get("sample"),
@@ -955,9 +1037,7 @@ def render_trace(items: list[dict]) -> None:
                 "来源列": item.get("source_column"),
             }
             for item in items[:300]
-        ],
-        use_container_width=True,
-        hide_index=True,
+        ]
     )
 
 
@@ -2217,7 +2297,7 @@ def render_cleanup_file_preview(item: dict) -> None:
     elif suffix in {".xlsx", ".xlsm"}:
         rows = _excel_preview_rows(file_bytes)
         if rows:
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            render_themed_table(rows)
         else:
             st.info("该 Excel 文件未读取到可预览数据。")
     elif suffix == ".csv":
@@ -2583,21 +2663,59 @@ with work_col:
                 parameter_column_order.append("material_id")
             if requires_ksbt:
                 parameter_column_order.append("cost_center")
-            edited_params = st.data_editor(
-                evidence_editor_rows,
-                use_container_width=True,
-                hide_index=True,
-                key="evidence_params_editor",
-                column_order=parameter_column_order,
-                column_config={
-                    "_selected_for_delete": st.column_config.CheckboxColumn("", width="small"),
-                    "sample_no": st.column_config.TextColumn("样本编号", required=True),
-                    "order_id": st.column_config.TextColumn("订单编号"),
-                    "product_id": st.column_config.TextColumn("CO03物料编码"),
-                    "material_id": st.column_config.TextColumn("CKM3物料ID"),
-                    "cost_center": st.column_config.TextColumn("KSBT成本中心"),
-                },
-            )
+            if theme_is_dark:
+                parameter_labels = {
+                    "_selected_for_delete": "",
+                    "sample_no": "样本编号",
+                    "order_id": "订单编号",
+                    "product_id": "CO03物料编码",
+                    "material_id": "CKM3物料ID",
+                    "cost_center": "KSBT成本中心",
+                }
+                column_widths = [0.45 if column == "_selected_for_delete" else 1.25 for column in parameter_column_order]
+                header_cols = st.columns(column_widths)
+                for column, field in zip(header_cols, parameter_column_order):
+                    column.markdown(
+                        f'<div class="dark-edit-header">{html.escape(parameter_labels.get(field, field))}</div>',
+                        unsafe_allow_html=True,
+                    )
+                edited_params = []
+                for row_index, row in enumerate(evidence_editor_rows):
+                    row_cols = st.columns(column_widths)
+                    edited_row = {}
+                    for column, field in zip(row_cols, parameter_column_order):
+                        with column:
+                            if field == "_selected_for_delete":
+                                edited_row[field] = st.checkbox(
+                                    "选择",
+                                    value=bool(row.get(field)),
+                                    key=f"dark_param_select_{row_index}",
+                                    label_visibility="collapsed",
+                                )
+                            else:
+                                edited_row[field] = st.text_input(
+                                    parameter_labels.get(field, field),
+                                    value=str(row.get(field) or ""),
+                                    key=f"dark_param_{field}_{row_index}",
+                                    label_visibility="collapsed",
+                                )
+                    edited_params.append(edited_row)
+            else:
+                edited_params = st.data_editor(
+                    evidence_editor_rows,
+                    use_container_width=True,
+                    hide_index=True,
+                    key="evidence_params_editor",
+                    column_order=parameter_column_order,
+                    column_config={
+                        "_selected_for_delete": st.column_config.CheckboxColumn("", width="small"),
+                        "sample_no": st.column_config.TextColumn("样本编号", required=True),
+                        "order_id": st.column_config.TextColumn("订单编号"),
+                        "product_id": st.column_config.TextColumn("CO03物料编码"),
+                        "material_id": st.column_config.TextColumn("CKM3物料ID"),
+                        "cost_center": st.column_config.TextColumn("KSBT成本中心"),
+                    },
+                )
             apply_evidence_params_editor(edited_params or [])
             selected_samples_to_delete = [
                 str(row.get("sample_no") or "").strip()
@@ -2672,7 +2790,7 @@ with work_col:
 
                     ckm3_ocr_excels = st.session_state.get("ckm3_ocr_excels") or []
                     if ckm3_ocr_excels:
-                        st.dataframe(
+                        render_themed_table(
                             [
                                 {
                                     "来源截图": item.get("source_file"),
@@ -2681,9 +2799,7 @@ with work_col:
                                     "明细行数": item.get("row_count"),
                                 }
                                 for item in ckm3_ocr_excels
-                            ],
-                            use_container_width=True,
-                            hide_index=True,
+                            ]
                         )
                         for index, item in enumerate(ckm3_ocr_excels, start=1):
                             if item.get("bytes"):
@@ -2763,7 +2879,7 @@ with work_col:
                     st.session_state.get("filename_cleanup_results") or [],
                     required_reports,
                 )
-                st.dataframe(completeness, use_container_width=True, hide_index=True)
+                render_themed_table(completeness)
                 example_names = []
                 if "CO03" in required_reports:
                     example_names.append("<code>样本1/1.订单编号11000437-CO03-表格.xlsx</code>")
@@ -2860,7 +2976,7 @@ with work_col:
                             }
                         )
                         cleanup_table_rows.append(cleanup_row)
-                    st.dataframe(cleanup_table_rows, use_container_width=True, hide_index=True)
+                    render_themed_table(cleanup_table_rows)
 
                     st.markdown("#### 标准文件名预览")
                     st.caption("点击标准文件名可预览文件内容。图片会直接展示，Excel 会展示首个 Sheet 的前 30 行。")
@@ -2926,14 +3042,12 @@ with work_col:
             with tab_upload:
                 calculation_sample_count = evidence_sample_count()
                 st.markdown("##### 样本文件完整性")
-                st.dataframe(
+                render_themed_table(
                     sample_completeness_rows_v2(
                         int(calculation_sample_count),
                         st.session_state.get("filename_cleanup_results") or [],
                         required_reports,
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
+                    )
                 )
 
                 st.markdown("##### 补充缺失文件")
