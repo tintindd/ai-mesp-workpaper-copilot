@@ -1952,18 +1952,13 @@ with work_col:
                     st.error(st.session_state["parameter_ocr_error"])
 
             st.markdown("#### 参数识别台账")
-            evidence_editor_rows = [
-                {"删除": False, **row}
-                for row in evidence_params_table()
-            ]
             edited_params = st.data_editor(
-                evidence_editor_rows,
+                evidence_params_table(),
                 use_container_width=True,
                 hide_index=True,
                 num_rows="dynamic",
                 key="evidence_params_editor",
                 column_config={
-                    "删除": st.column_config.CheckboxColumn("删除"),
                     "sample_no": st.column_config.TextColumn("样本编号", required=True),
                     "order_id": st.column_config.TextColumn("订单编号"),
                     "product_id": st.column_config.TextColumn("CO03物料编码"),
@@ -1972,10 +1967,35 @@ with work_col:
                 },
             )
             apply_evidence_params_editor(edited_params or [])
+
+            st.caption("如需删除样本，请在下方表格左侧勾选样本行。")
+            delete_selector_rows = evidence_params_table()
+            delete_selection = st.dataframe(
+                delete_selector_rows,
+                use_container_width=True,
+                hide_index=True,
+                key="evidence_params_delete_selector",
+                on_select="rerun",
+                selection_mode="multi-row",
+                column_config={
+                    "sample_no": st.column_config.TextColumn("样本编号"),
+                    "order_id": st.column_config.TextColumn("订单编号"),
+                    "product_id": st.column_config.TextColumn("CO03物料编码"),
+                    "material_id": st.column_config.TextColumn("CKM3物料ID"),
+                    "cost_center": st.column_config.TextColumn("KSBT成本中心"),
+                },
+            )
+            selection_state = getattr(delete_selection, "selection", None)
+            if selection_state is None and isinstance(delete_selection, dict):
+                selection_state = delete_selection.get("selection")
+            selected_rows = getattr(selection_state, "rows", None)
+            if selected_rows is None and isinstance(selection_state, dict):
+                selected_rows = selection_state.get("rows")
+            selected_rows = selected_rows or []
             selected_samples_to_delete = [
-                str(row.get("sample_no") or "").strip()
-                for row in (edited_params or [])
-                if row.get("删除") and str(row.get("sample_no") or "").strip()
+                str(delete_selector_rows[index].get("sample_no") or "").strip()
+                for index in selected_rows
+                if 0 <= index < len(delete_selector_rows)
             ]
             if selected_samples_to_delete:
                 st.warning(
