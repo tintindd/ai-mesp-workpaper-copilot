@@ -1960,7 +1960,6 @@ with work_col:
                 evidence_editor_rows,
                 use_container_width=True,
                 hide_index=True,
-                num_rows="dynamic",
                 key="evidence_params_editor",
                 column_order=[
                     "_selected_for_delete",
@@ -1971,7 +1970,7 @@ with work_col:
                     "cost_center",
                 ],
                 column_config={
-                    "_selected_for_delete": st.column_config.CheckboxColumn(""),
+                    "_selected_for_delete": st.column_config.CheckboxColumn("", width="small"),
                     "sample_no": st.column_config.TextColumn("样本编号", required=True),
                     "order_id": st.column_config.TextColumn("订单编号"),
                     "product_id": st.column_config.TextColumn("CO03物料编码"),
