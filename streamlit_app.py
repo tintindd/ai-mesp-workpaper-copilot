@@ -5,11 +5,13 @@ import sys
 import tempfile
 import zipfile
 import html
+from copy import copy
 from io import BytesIO
 from pathlib import Path
 import re
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 import streamlit as st
@@ -529,6 +531,259 @@ def extract_zip_bytes(zip_bytes: bytes, target_dir: Path) -> int:
     return saved
 
 
+def unique_sheet_name(workbook: Workbook, base_name: str) -> str:
+    cleaned = re.sub(r"[:\\/?*\[\]]", "-", str(base_name or "Sheet"))[:31] or "Sheet"
+    if cleaned not in workbook.sheetnames:
+        return cleaned
+    index = 2
+    while True:
+        suffix = f"-{index}"
+        candidate = (cleaned[: 31 - len(suffix)] + suffix)[:31]
+        if candidate not in workbook.sheetnames:
+            return candidate
+        index += 1
+
+
+def copy_worksheet_contents(source_sheet, target_sheet) -> None:
+    target_sheet.sheet_view.showGridLines = source_sheet.sheet_view.showGridLines
+    target_sheet.freeze_panes = source_sheet.freeze_panes
+    for col_key, dimension in source_sheet.column_dimensions.items():
+        target_sheet.column_dimensions[col_key].width = dimension.width
+        target_sheet.column_dimensions[col_key].hidden = dimension.hidden
+    for row_index, dimension in source_sheet.row_dimensions.items():
+        target_sheet.row_dimensions[row_index].height = dimension.height
+        target_sheet.row_dimensions[row_index].hidden = dimension.hidden
+    for row in source_sheet.iter_rows():
+        for source_cell in row:
+            target_cell = target_sheet[source_cell.coordinate]
+            if not isinstance(source_cell, MergedCell):
+                target_cell.value = source_cell.value
+            if source_cell.has_style:
+                target_cell.font = copy(source_cell.font)
+                target_cell.fill = copy(source_cell.fill)
+                target_cell.border = copy(source_cell.border)
+                target_cell.alignment = copy(source_cell.alignment)
+                target_cell.number_format = source_cell.number_format
+                target_cell.protection = copy(source_cell.protection)
+            if source_cell.hyperlink:
+                target_cell._hyperlink = copy(source_cell.hyperlink)
+            if source_cell.comment:
+                target_cell.comment = copy(source_cell.comment)
+    for merged_range in source_sheet.merged_cells.ranges:
+        target_sheet.merge_cells(str(merged_range))
+
+
+def quote_excel_sheet(sheet_name: str) -> str:
+    return "'" + str(sheet_name).replace("'", "''") + "'"
+
+
+def find_sample_report_sheet(workbook: Workbook, sample: int | str, report: str) -> str:
+    sample_text = str(sample)
+    report_text = str(report).upper()
+    sample_tokens = [f"样本{sample_text}", f"SAMPLE{sample_text}", f"{sample_text}."]
+    for sheet_name in workbook.sheetnames:
+        upper_name = sheet_name.upper()
+        if report_text not in upper_name:
+            continue
+        if any(token.upper() in upper_name for token in sample_tokens):
+            return sheet_name
+    return ""
+
+
+def directory_lookup_formula(sample: int | str, column_letter: str) -> str:
+    directory = quote_excel_sheet("SPP目录")
+    return f'=IFERROR(INDEX({directory}!${column_letter}:${column_letter},MATCH("样本{sample}",{directory}!$A:$A,0)),"")'
+
+
+def source_header_column(sheet_name: str, header: str) -> str:
+    quoted = quote_excel_sheet(sheet_name)
+    return f"INDEX({quoted}!$A:$ZZ,0,MATCH(\"{header}\",{quoted}!$1:$1,0))"
+
+
+def source_value_by_header_formula(sheet_name: str, header: str, row_index: int = 2) -> str:
+    quoted = quote_excel_sheet(sheet_name)
+    return f'=IFERROR(INDEX({quoted}!$A:$ZZ,{row_index},MATCH("{header}",{quoted}!$1:$1,0)),"")'
+
+
+def source_match_formula(sheet_name: str, return_header: str, match_header: str, match_text: str) -> str:
+    quoted = quote_excel_sheet(sheet_name)
+    return (
+        f'=IFERROR(INDEX({quoted}!$A:$ZZ,'
+        f'MATCH("*{match_text}*",{source_header_column(sheet_name, match_header)},0),'
+        f'MATCH("{return_header}",{quoted}!$1:$1,0)),"")'
+    )
+
+
+def source_sumifs_formula(sheet_name: str, sum_header: str, match_header: str, match_text: str) -> str:
+    return (
+        f'=IFERROR(SUMIFS({source_header_column(sheet_name, sum_header)},'
+        f'{source_header_column(sheet_name, match_header)},"*{match_text}*"),0)'
+    )
+
+
+def source_sumifs_criteria_formula(sheet_name: str, sum_header: str, criteria: list[tuple[str, str | int | float]]) -> str:
+    criteria_parts = []
+    for header, criterion in criteria:
+        if isinstance(criterion, (int, float)):
+            criteria_text = str(criterion)
+        else:
+            criteria_text = f'"{criterion}"'
+        criteria_parts.append(f'{source_header_column(sheet_name, header)},{criteria_text}')
+    return f'=IFERROR(SUMIFS({source_header_column(sheet_name, sum_header)},{",".join(criteria_parts)}),0)'
+
+
+def co03_expense_formula(sheet_name: str, expense: str, return_header: str) -> str:
+    return source_sumifs_criteria_formula(
+        sheet_name,
+        return_header,
+        [
+            ("成本要素 (文本)", f"*{expense}*"),
+            ("业务交易", "*确认*"),
+        ],
+    )
+
+
+def ksbt_actual_rate_formula(sheet_name: str, expense: str) -> str:
+    return source_sumifs_criteria_formula(
+        sheet_name,
+        "Fix+可变价格",
+        [
+            ("作业类型短文本", f"*{expense}*"),
+            ("PrT", 5),
+        ],
+    )
+
+
+def move_sheets_to_front(workbook: Workbook, sheet_names: list[str]) -> None:
+    for sheet_name in reversed(sheet_names):
+        if sheet_name not in workbook.sheetnames:
+            continue
+        sheet = workbook[sheet_name]
+        workbook._sheets.remove(sheet)
+        workbook._sheets.insert(0, sheet)
+
+
+def prune_unused_supporting_sheets(workbook: Workbook, program: str) -> None:
+    required = set(required_reports_for_program(program))
+    report_tokens = {"CO03", "KSBT", "3611", "CKM3"}
+    for sheet_name in list(workbook.sheetnames):
+        upper_name = sheet_name.upper()
+        if "SPD030" in upper_name or sheet_name in {"SPP目录", "INF-截图"}:
+            continue
+        report = next((token for token in report_tokens if token in upper_name), "")
+        if report and report not in required:
+            del workbook[sheet_name]
+
+
+def inject_spd03015_source_formulas(workbook: Workbook) -> None:
+    sheet_name = "SPD03015_IRM(SAP)"
+    if sheet_name not in workbook.sheetnames:
+        return
+    sheet = workbook[sheet_name]
+    for row in range(19, sheet.max_row + 1):
+        sample = sheet.cell(row, 1).value
+        if not str(sample or "").isdigit():
+            continue
+        ckm3_sheet = find_sample_report_sheet(workbook, sample, "CKM3")
+        sheet.cell(row, 2).value = directory_lookup_formula(sample, "C")
+        if not ckm3_sheet:
+            continue
+        sheet.cell(row, 4).value = source_match_formula(ckm3_sheet, "交易数量", "类别", "期初库存")
+        sheet.cell(row, 5).value = source_sumifs_formula(ckm3_sheet, "价格差异", "类别", "期初库存")
+        sheet.cell(row, 6).value = source_match_formula(ckm3_sheet, "交易数量", "类别", "收货")
+        sheet.cell(row, 7).value = source_sumifs_formula(ckm3_sheet, "价格差异", "类别", "收货")
+        sheet.cell(row, 8).value = source_sumifs_formula(ckm3_sheet, "价格差异", "类别", "消耗")
+        sheet.cell(row, 13).value = (
+            f'=IFERROR({source_match_formula(ckm3_sheet, "交易数量", "类别", "消耗")[1:]},'
+            f'{source_match_formula(ckm3_sheet, "交易数量", "类别", "期末库存")[1:]})'
+        )
+
+
+def inject_irm_source_formulas(workbook: Workbook, program: str) -> None:
+    sheet_name = "SPD03012-IRM(SAP)" if program == "SPD03012" else "SPD03014_IRM(SAP)"
+    if sheet_name not in workbook.sheetnames:
+        return
+    sheet = workbook[sheet_name]
+    for row in range(1, sheet.max_row + 1):
+        sample_text = str(sheet.cell(row, 2).value or "").strip()
+        match = re.search(r"样本\s*(\d+)", sample_text)
+        if not match:
+            continue
+        sample = match.group(1)
+        co03_sheet = find_sample_report_sheet(workbook, sample, "CO03")
+        ksbt_sheet = find_sample_report_sheet(workbook, sample, "KSBT")
+        if program == "SPD03014":
+            expense = str(sheet.cell(row, 6).value or "").strip()
+            if co03_sheet:
+                sheet.cell(row, 3).value = source_match_formula(co03_sheet, "物料", "业务交易", "收货")
+                sheet.cell(row, 7).value = co03_expense_formula(co03_sheet, expense, "实际总计数量")
+                sheet.cell(row, 8).value = co03_expense_formula(co03_sheet, expense, "总计划成本")
+                sheet.cell(row, 9).value = co03_expense_formula(co03_sheet, expense, "总实际成本")
+                sheet.cell(row, 10).value = co03_expense_formula(co03_sheet, expense, "计划/实际差异")
+            if ksbt_sheet:
+                sheet.cell(row, 4).value = source_value_by_header_formula(ksbt_sheet, "成本中心", 2)
+                sheet.cell(row, 11).value = ksbt_actual_rate_formula(ksbt_sheet, expense)
+            sheet.cell(row, 5).value = directory_lookup_formula(sample, "B")
+            sheet.cell(row, 14).value = f"=G{row}"
+            sheet.cell(row, 16).value = f'=IFERROR(I{row}/N{row},0)'
+        elif program == "SPD03012":
+            e_value = str(sheet.cell(row, 5).value or "")
+            if e_value and re.search(r"\d{6,}", e_value):
+                expense = str(sheet.cell(row, 6).value or "").strip()
+                if co03_sheet:
+                    sheet.cell(row, 3).value = source_match_formula(co03_sheet, "物料", "业务交易", "收货")
+                    sheet.cell(row, 6).value = co03_expense_formula(co03_sheet, expense, "总计划成本")
+                    sheet.cell(row, 7).value = co03_expense_formula(co03_sheet, expense, "总实际成本")
+                    sheet.cell(row, 8).value = co03_expense_formula(co03_sheet, expense, "计划/实际差异")
+                    sheet.cell(row, 12).value = co03_expense_formula(co03_sheet, expense, "实际总计数量")
+                if ksbt_sheet:
+                    sheet.cell(row, 4).value = source_value_by_header_formula(ksbt_sheet, "成本中心", 2)
+                    sheet.cell(row, 9).value = ksbt_actual_rate_formula(ksbt_sheet, expense)
+                sheet.cell(row, 5).value = directory_lookup_formula(sample, "B")
+                sheet.cell(row, 14).value = f'=IFERROR(G{row}/L{row},0)'
+            else:
+                expense = str(sheet.cell(row, 5).value or "").strip()
+                sheet.cell(row, 3).value = directory_lookup_formula(sample, "B")
+                if co03_sheet:
+                    sheet.cell(row, 6).value = co03_expense_formula(co03_sheet, expense, "总计划成本")
+                    sheet.cell(row, 7).value = co03_expense_formula(co03_sheet, expense, "总实际成本")
+                    sheet.cell(row, 8).value = co03_expense_formula(co03_sheet, expense, "计划/实际差异")
+                    sheet.cell(row, 12).value = co03_expense_formula(co03_sheet, expense, "实际总计数量")
+                if ksbt_sheet:
+                    sheet.cell(row, 4).value = source_value_by_header_formula(ksbt_sheet, "成本中心", 2)
+                    sheet.cell(row, 9).value = ksbt_actual_rate_formula(ksbt_sheet, expense)
+                sheet.cell(row, 14).value = f'=IFERROR(G{row}/L{row},0)'
+
+
+def inject_workpaper_source_formulas(workbook: Workbook, program: str) -> None:
+    if program == "SPD03015":
+        inject_spd03015_source_formulas(workbook)
+    elif program in {"SPD03012", "SPD03014"}:
+        inject_irm_source_formulas(workbook, program)
+
+
+def merge_supporting_and_workpaper_bytes(supporting_bytes: bytes, workpaper_bytes: bytes, program: str, result: dict) -> bytes:
+    supporting_workbook = load_workbook(BytesIO(supporting_bytes), data_only=False)
+    workpaper_workbook = load_workbook(BytesIO(workpaper_bytes), data_only=False)
+    workpaper_sheet_names = []
+    for sheet_name in workpaper_workbook.sheetnames:
+        source_sheet = workpaper_workbook[sheet_name]
+        target_name = unique_sheet_name(supporting_workbook, sheet_name)
+        target_sheet = supporting_workbook.create_sheet(target_name)
+        copy_worksheet_contents(source_sheet, target_sheet)
+        workpaper_sheet_names.append(target_name)
+    prune_unused_supporting_sheets(supporting_workbook, program)
+    inject_workpaper_source_formulas(supporting_workbook, program)
+    move_sheets_to_front(supporting_workbook, workpaper_sheet_names)
+    supporting_workbook.calculation.fullCalcOnLoad = True
+    supporting_workbook.calculation.forceFullCalc = True
+    supporting_workbook.properties.title = "AI-MESP Workpaper Result"
+    supporting_workbook.properties.subject = f"SPP + {program}_IRM(SAP)"
+    output = BytesIO()
+    supporting_workbook.save(output)
+    return output.getvalue()
+
+
 def build_analysis_bundle_from_folder(source_dir: Path, period: str, program: str) -> dict:
     result = analyze_folder(source_dir, period=period, program=program)
     supporting_bytes = build_supporting_bytes(result, source_dir)
@@ -541,11 +796,17 @@ def build_analysis_bundle_from_folder(source_dir: Path, period: str, program: st
         if summary.get("sample_count", 0) > 0 and summary.get("recognized_file_count", 0) > 0
         else b""
     )
+    combined_result_bytes = (
+        merge_supporting_and_workpaper_bytes(supporting_bytes, selected_spd_bytes, program, result)
+        if selected_spd_bytes
+        else supporting_bytes
+    )
     return {
         "result": result,
         "program": program,
         "supporting_bytes": supporting_bytes,
         "selected_spd_bytes": selected_spd_bytes,
+        "combined_result_bytes": combined_result_bytes,
     }
 
 
@@ -1241,15 +1502,25 @@ def run_filename_cleanup_by_bucket(
     order_id: str,
     bucket_files: dict[str, list],
 ) -> None:
-    st.session_state["filename_cleanup_results"] = []
     st.session_state["processing_focus"] = "cleanup"
     st.session_state.pop("standard_named_zip_bytes", None)
     st.session_state.pop("filename_cleanup_error", None)
 
-    results = []
+    results = [
+        item
+        for item in (st.session_state.get("parameter_standard_files") or [])
+        if str(item.get("sample_no") or "").strip() == str(sample_no or "").strip()
+    ]
+    st.session_state["filename_cleanup_results"] = results
     try:
         params = current_evidence_params(sample_no)
         sample_no = str(sample_no or params.get("sample_no") or "1").strip()
+        results = [
+            item
+            for item in (st.session_state.get("parameter_standard_files") or [])
+            if str(item.get("sample_no") or "").strip() == sample_no
+        ]
+        st.session_state["filename_cleanup_results"] = results
         order_id = str(order_id or params.get("order_id") or "").strip()
         param_product_id = str(params.get("product_id") or "").strip()
         param_material_id = str(params.get("material_id") or "").strip()
@@ -1417,6 +1688,15 @@ def run_filename_cleanup_by_bucket(
                     cleaned["missing_fields"] = missing_fields
                     cleaned["missing_field_labels"] = display_missing_fields(cleaned["report_type"], missing_fields)
                     cleaned["source"] = "DeepSeek 文件名清洗 + Excel 字段检查"
+                    results = [
+                        item
+                        for item in results
+                        if not (
+                            str(item.get("sample_no") or "") == str(cleaned["sample_no"])
+                            and str(item.get("report_type") or "") == str(cleaned["report_type"])
+                            and str(item.get("evidence_kind") or "") == str(cleaned["evidence_kind"])
+                        )
+                    ]
                     results.append(cleaned)
         progress_bar.progress(1.0, text="文件名清洗完成")
         progress_status.caption("文件名清洗完成")
@@ -2674,6 +2954,7 @@ with work_col:
             selected_program = bundle["program"]
             supporting_bytes = bundle["supporting_bytes"]
             selected_spd_bytes = bundle["selected_spd_bytes"]
+            combined_result_bytes = bundle.get("combined_result_bytes") or supporting_bytes
 
             summary = result.get("summary", {})
             cols = st.columns(5)
@@ -2702,26 +2983,14 @@ with work_col:
                 else:
                     st.info(f"本次生成的测试程序：{selected_program}")
                     render_workbook_result_preview(
-                        "SPP Supporting Excel 预览",
-                        supporting_bytes,
-                        "supporting_result_preview",
-                    )
-                    render_workbook_result_preview(
-                        f"{selected_program}_IRM(SAP) 预览",
-                        selected_spd_bytes,
-                        "selected_spd_result_preview",
+                        "合并结果 Excel 预览（SPP + 底稿）",
+                        combined_result_bytes,
+                        "combined_result_preview",
                     )
                     st.download_button(
-                        "下载 SPP Supporting Excel",
-                        data=supporting_bytes,
-                        file_name="AI-MESP_SPP_Supporting.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="secondary",
-                    )
-                    st.download_button(
-                        f"下载 {selected_program}_IRM(SAP)",
-                        data=selected_spd_bytes,
-                        file_name=f"AI-MESP_{selected_program}_IRM(SAP).xlsx",
+                        "下载合并底稿结果 Excel",
+                        data=combined_result_bytes,
+                        file_name=f"AI-MESP_{selected_program}_合并底稿结果.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         type="primary",
                     )
