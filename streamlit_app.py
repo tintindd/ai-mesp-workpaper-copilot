@@ -20,6 +20,7 @@ import streamlit.components.v1 as components
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
+PAGE_ICON_PATH = PROJECT_ROOT / "assets" / "costlens_icon.png"
 if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
@@ -48,7 +49,7 @@ recognize_ksbt_cost_center = getattr(ocr_client, "recognize_ksbt_cost_center", N
 
 st.set_page_config(
     page_title="AI-MESP Workpaper Copilot",
-    page_icon="📊",
+    page_icon=str(PAGE_ICON_PATH),
     layout="wide",
 )
 
